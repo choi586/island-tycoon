@@ -1,0 +1,2702 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>3D 무인도 타이쿤 온라인</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Jua&family=Noto+Sans+KR:wght@500;700;900&display=swap" rel="stylesheet">
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Noto Sans KR', sans-serif;
+      background-color: #1ca3ec;
+    }
+    .font-game {
+      font-family: 'Jua', sans-serif;
+    }
+    #game-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    /* 떠다니는 3D 라벨 (건설 발판, NPC 상태 등) */
+    .world-label {
+      position: absolute;
+      transform: translate(-50%, -100%);
+      pointer-events: none;
+      transition: opacity 0.2s;
+      z-index: 10;
+    }
+    /* 알림 토스트 애니메이션 */
+    @keyframes popIn {
+      0% { transform: translate(-50%, -20px) scale(0.8); opacity: 0; }
+      100% { transform: translate(-50%, 0) scale(1); opacity: 1; }
+    }
+    .toast-anim {
+      animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    }
+    /* 피버 테두리 효과 */
+    .fever-glow {
+      box-shadow: inset 0 0 40px rgba(255, 165, 0, 0.75);
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <!-- 3D 캔버스 -->
+  <canvas id="game-canvas"></canvas>
+
+  <!-- 피버 타임 화면 외곽 글로우 -->
+  <div id="fever-overlay" class="fixed inset-0 fever-glow hidden z-10"></div>
+
+  <!-- 3D 오브젝트 위 HUD 라벨 컨테이너 -->
+  <div id="world-labels-container" class="fixed inset-0 pointer-events-none overflow-hidden z-10"></div>
+
+  <!-- 상단 HUD: 자원 현황 & 피버 게이지 -->
+  <div class="fixed top-0 left-0 right-0 p-3 sm:p-4 flex flex-wrap items-start justify-between gap-2 pointer-events-none z-20">
+    <!-- 좌측: 보유 자원 & 적재량 -->
+    <div class="flex flex-wrap items-center gap-2 bg-slate-900/75 backdrop-blur-md text-white px-3.5 py-2 rounded-2xl border border-white/20 shadow-lg pointer-events-auto">
+      <div class="flex items-center gap-1.5 pr-2 border-r border-white/20">
+        <span class="text-lg">🪵</span>
+        <span id="ui-wood" class="font-game text-lg sm:text-xl text-amber-300">0</span>
+      </div>
+      <div class="flex items-center gap-1.5 pr-2 border-r border-white/20">
+        <span class="text-lg">🪨</span>
+        <span id="ui-stone" class="font-game text-lg sm:text-xl text-slate-200">0</span>
+      </div>
+      <div class="flex items-center gap-1.5 pr-2 border-r border-white/20">
+        <span class="text-lg">🪙</span>
+        <span id="ui-gold" class="font-game text-lg sm:text-xl text-yellow-400">0</span>
+      </div>
+      <div class="flex items-center gap-1 text-xs sm:text-sm bg-white/10 px-2.5 py-1 rounded-xl">
+        <span>🎒</span>
+        <span id="ui-carry" class="font-bold text-emerald-300">0 / 12</span>
+      </div>
+    </div>
+
+    <!-- 우측: 피버 게이지 & 사운드/도움말 버튼 -->
+    <div class="flex items-center gap-2 pointer-events-auto">
+      <!-- 피버 게이지 -->
+      <div class="bg-slate-900/75 backdrop-blur-md text-white px-3 py-2 rounded-2xl border border-white/20 shadow-lg flex items-center gap-2">
+        <span id="fever-icon" class="text-lg">🔥</span>
+        <div class="w-24 sm:w-32 h-3.5 bg-slate-700 rounded-full overflow-hidden p-0.5">
+          <div id="ui-fever-bar" class="h-full bg-gradient-to-r from-amber-400 via-orange-500 to-red-500 rounded-full transition-all duration-200" style="width: 0%;"></div>
+        </div>
+        <span id="ui-fever-text" class="text-xs font-bold text-orange-300 w-9 text-right">0%</span>
+      </div>
+
+      <!-- 접속한 사람 목록 -->
+      <button id="btn-people" class="bg-slate-900/75 hover:bg-slate-800 backdrop-blur-md text-white px-3 py-2 rounded-2xl border border-white/20 shadow-lg transition active:scale-95 font-bold text-sm" title="함께 노는 사람들">
+        👥 <span id="ui-online">-</span>
+      </button>
+
+      <!-- 사운드 토글 -->
+      <button id="btn-sound" class="bg-slate-900/75 hover:bg-slate-800 backdrop-blur-md text-white p-2.5 rounded-2xl border border-white/20 shadow-lg transition active:scale-95" title="효과음 켜기/끄기">
+        🔊
+      </button>
+    </div>
+  </div>
+
+  <!-- 함께 노는 사람들 패널 -->
+  <div id="people-panel" class="fixed top-16 right-3 w-64 max-h-[55vh] overflow-y-auto bg-slate-900/85 backdrop-blur-md text-white rounded-2xl border border-white/20 shadow-xl p-3 z-20 hidden">
+    <div class="flex items-center justify-between mb-2">
+      <div class="font-game text-lg text-amber-300">🌊 이웃 섬들</div>
+      <div id="ui-net" class="text-[11px] text-white/60">연결 전</div>
+    </div>
+    <div id="people-list" class="space-y-1.5 text-sm"></div>
+    <div class="text-[11px] text-white/50 mt-2 leading-snug">놀러 간 섬에서는 구경만 할 수 있어요. 채집·건설은 내 섬에서!</div>
+  </div>
+
+  <!-- 내 섬으로 돌아가기 -->
+  <button id="btn-home" class="fixed bottom-24 left-1/2 -translate-x-1/2 hidden z-30 bg-gradient-to-r from-emerald-400 to-teal-500 text-white font-game text-lg px-5 py-2.5 rounded-2xl shadow-lg border-2 border-white/70 active:scale-95">
+    🏠 내 섬으로 돌아가기
+  </button>
+
+  <!-- 감정 표현 -->
+  <div id="emote-bar" class="fixed bottom-3 right-3 hidden gap-1.5 z-20 bg-slate-900/70 backdrop-blur-md p-1.5 rounded-2xl border border-white/15"></div>
+
+  <!-- 중앙 상단 이벤트 알림 배너 -->
+  <div id="toast-container" class="fixed top-20 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 pointer-events-none z-30 w-full max-w-md px-4"></div>
+
+  <!-- 하단 상태 요약 & 조작 안내 -->
+  <div class="fixed bottom-3 left-3 right-3 flex items-end justify-between pointer-events-none z-20">
+    <div class="bg-slate-900/70 backdrop-blur-md text-white/90 text-xs sm:text-sm px-3.5 py-2 rounded-2xl border border-white/15 shadow-md">
+      <div class="font-bold text-amber-300 mb-0.5">🏝️ 목표: 자원을 모아 등대를 완공하세요!</div>
+      <div class="text-white/80">이동: <span class="text-white font-semibold">WASD / 방향키</span> 또는 <span class="text-white font-semibold">화면 드래그</span></div>
+      <div id="ui-workers-status" class="text-emerald-300 mt-0.5 font-medium">🐾 고용된 일꾼: 벌목꾼 0/2 · 광부 0/2</div>
+    </div>
+  </div>
+
+  <!-- 가상 조이스틱 UI (터치/드래그 시 표시) -->
+  <div id="joystick-zone" class="fixed pointer-events-none hidden z-30">
+    <div id="joystick-base" class="w-28 h-28 rounded-full bg-white/20 border-2 border-white/40 backdrop-blur-xs flex items-center justify-center -translate-x-1/2 -translate-y-1/2">
+      <div id="joystick-stick" class="w-12 h-12 rounded-full bg-white/80 shadow-lg"></div>
+    </div>
+  </div>
+
+  <!-- 오프닝 컷신 시네마틱 자막 & 스킵 UI -->
+  <div id="cutscene-ui" class="fixed inset-0 pointer-events-none hidden flex-col justify-between z-40">
+    <!-- 상단 시네마틱 레터박스 바 -->
+    <div class="w-full h-14 sm:h-16 bg-slate-950/90 border-b border-white/10 flex items-center justify-center">
+      <span class="text-amber-300/90 text-xs sm:text-sm tracking-widest font-bold uppercase">⚓ Prologue · 난파와 표류</span>
+    </div>
+
+    <!-- 하단 시네마틱 레터박스 & 대사 자막 -->
+    <div class="w-full bg-slate-950/90 border-t border-white/10 px-4 py-5 sm:py-6 flex flex-col items-center justify-center relative">
+      <p id="cutscene-caption" class="font-game text-lg sm:text-2xl text-white text-center drop-shadow max-w-2xl leading-snug">
+        거센 폭풍우에 배가 암초와 부딪혔다...!
+      </p>
+      <button id="btn-skip-cutscene" class="pointer-events-auto mt-3 sm:mt-0 sm:absolute sm:right-6 sm:top-1/2 sm:-translate-y-1/2 bg-white/15 hover:bg-white/25 text-white text-xs sm:text-sm font-bold px-4 py-2 rounded-xl border border-white/25 transition active:scale-95 cursor-pointer">
+        컷신 건너뛰기 ⏭️
+      </button>
+    </div>
+  </div>
+
+  <!-- 시작 모달 -->
+  <div id="start-modal" class="fixed inset-0 bg-slate-950/65 backdrop-blur-sm flex items-center justify-center p-4 z-40">
+    <div class="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 text-center shadow-2xl border-4 border-amber-300">
+      <div class="text-5xl mb-3">🏝️</div>
+      <h1 class="font-game text-3xl sm:text-4xl text-slate-800 mb-2">3D 무인도 타이쿤</h1>
+      <p class="text-slate-600 text-sm sm:text-base mb-5 leading-relaxed">
+        나무와 바위를 캐서 다리를 놓고 섬을 확장하세요!<br/>
+        귀여운 <span class="font-bold text-amber-600">꼬마 일꾼</span>을 고용하고, <span class="font-bold text-orange-500">보물상자와 황금 게</span>를 찾아 최종 <span class="font-bold text-sky-600">등대</span>를 완공해 보세요!
+      </p>
+      <div class="bg-amber-50 rounded-2xl p-3.5 mb-6 text-left text-xs sm:text-sm text-slate-700 space-y-1.5 border border-amber-200">
+        <div>🪓 <b>자동 채집:</b> 나무/바위 옆에 서면 자동으로 채집합니다.</div>
+        <div>🏗️ <b>자동 건설:</b> 흰색 발판 위에 서면 자원이 투입됩니다.</div>
+        <div>✨ <b>미니 이벤트:</b> 황금 자원, 피버 타임, 황금 게, 2~3분마다 떠밀려오는 보물상자!</div>
+        <div>🌊 <b>함께하기:</b> 접속한 사람마다 섬이 하나씩! 바다 건너 친구 섬에 놀러 가 보세요.</div>
+      </div>
+      <input id="name-input" maxlength="10" placeholder="내 이름 (섬 주인 이름)" autocomplete="off"
+        class="w-full mb-3 px-4 py-3 rounded-2xl border-2 border-amber-300 text-center font-bold text-slate-800 outline-none focus:border-orange-400"
+        style="user-select:text;-webkit-user-select:text;touch-action:auto" />
+      <button id="btn-start" class="w-full py-3.5 px-6 bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 text-white font-game text-2xl rounded-2xl shadow-lg shadow-orange-500/30 transition transform active:scale-95 cursor-pointer">
+        모험 시작하기! 🚀
+      </button>
+    </div>
+  </div>
+
+  <!-- 등대 완공 클리어 모달 -->
+  <div id="victory-modal" class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 text-center shadow-2xl border-4 border-yellow-400">
+      <div class="text-6xl mb-3">🗼✨</div>
+      <h2 class="font-game text-3xl sm:text-4xl text-slate-800 mb-2">등대 완공 축하합니다!</h2>
+      <p class="text-slate-600 text-sm sm:text-base mb-5">
+        황량했던 무인도가 활기찬 기지로 거듭났습니다!<br/>
+        계속 섬을 돌아다니며 일꾼들과 함께 자유롭게 플레이할 수 있습니다.
+      </p>
+      <div id="victory-stats" class="bg-sky-50 rounded-2xl p-4 mb-6 text-sm text-slate-700 font-semibold border border-sky-200"></div>
+      <button id="btn-continue" class="w-full py-3.5 px-6 bg-gradient-to-r from-sky-400 to-blue-600 hover:from-sky-500 hover:to-blue-700 text-white font-game text-xl rounded-2xl shadow-lg transition transform active:scale-95 cursor-pointer">
+        계속 섬 둘러보기 🏝️
+      </button>
+    </div>
+  </div>
+
+  <script>
+    /**
+     * ============================================================================
+     * 1. 기획서 기반 튜닝 변수 (Tuning Variables)
+     * ============================================================================
+     */
+    const CONFIG = {
+      // 플레이어 관련
+      PLAYER_MOVE_SPEED: 6.5,
+      MAX_CARRY_CAPACITY: 12,
+      HARVEST_INTERVAL: 0.55,
+      HARVEST_RADIUS: 2.3,
+
+      // NPC 일꾼 관련
+      WORKER_MAX_LUMBERJACKS: 2,
+      WORKER_MAX_MINERS: 2,
+      WORKER_MOVE_SPEED: 4.0,
+      WORKER_CARRY_CAPACITY: 3,
+      WORKER_HARVEST_INTERVAL: 1.1,
+      WORKER_HIRE_COST: 20,
+
+      // 미니 이벤트 & 보물상자 관련
+      CHEST_SPAWN_MIN: 120, // 2분 (기획서 반영: 120~180초)
+      CHEST_SPAWN_MAX: 180, // 3분
+      GOLDEN_RESOURCE_CHANCE: 0.12, // 황금 나무/무지개 수정 확률 (12%)
+      FEVER_DURATION: 15.0,
+      FEVER_SPEED_MULTIPLIER: 2.0,
+      CRAB_SPAWN_INTERVAL: 45, // 황금 게 등장 주기(초)
+      MERCHANT_SPAWN_INTERVAL: 55, // 떠돌이 상인 펠리컨 주기(초)
+      MERCHANT_STAY_DURATION: 30.0,
+
+      // 환경 및 상호작용
+      RESOURCE_RESPAWN_TIME: 7.5,
+      DEPOSIT_INTERVAL: 0.09,
+    };
+
+    /**
+     * ============================================================================
+     * 2. 사운드 매니저 (Tone.js 합성 효과음 - 외부 오디오 파일 불필요)
+     * ============================================================================
+     */
+    class SoundManager {
+      constructor() {
+        this.enabled = true;
+        this.initialized = false;
+      }
+
+      async init() {
+        if (this.initialized) return;
+        try {
+          await Tone.start();
+          this.synth = new Tone.PolySynth(Tone.Synth, {
+            oscillator: { type: 'triangle' },
+            envelope: { attack: 0.01, decay: 0.12, sustain: 0.05, release: 0.2 }
+          }).toDestination();
+          this.synth.volume.value = -8;
+          this.initialized = true;
+        } catch (e) {
+          console.warn('Audio init skipped:', e);
+        }
+      }
+
+      playChop(isStone = false, isGolden = false) {
+        if (!this.enabled || !this.initialized) return;
+        const now = Tone.now();
+        if (isGolden) {
+          this.synth.triggerAttackRelease(['C5', 'E5', 'G5'], '16n', now);
+        } else if (isStone) {
+          this.synth.triggerAttackRelease('A2', '32n', now);
+        } else {
+          this.synth.triggerAttackRelease('D3', '32n', now);
+        }
+      }
+
+      playDeposit() {
+        if (!this.enabled || !this.initialized) return;
+        const notes = ['C5', 'D5', 'E5', 'G5'];
+        const note = notes[Math.floor(Math.random() * notes.length)];
+        this.synth.triggerAttackRelease(note, '32n', Tone.now());
+      }
+
+      playBuildComplete() {
+        if (!this.enabled || !this.initialized) return;
+        const now = Tone.now();
+        this.synth.triggerAttackRelease('C4', '16n', now);
+        this.synth.triggerAttackRelease('E4', '16n', now + 0.08);
+        this.synth.triggerAttackRelease('G4', '16n', now + 0.16);
+        this.synth.triggerAttackRelease('C5', '8n', now + 0.24);
+      }
+
+      playCoin() {
+        if (!this.enabled || !this.initialized) return;
+        const now = Tone.now();
+        this.synth.triggerAttackRelease('B5', '32n', now);
+        this.synth.triggerAttackRelease('E6', '16n', now + 0.06);
+      }
+
+      playFever() {
+        if (!this.enabled || !this.initialized) return;
+        const now = Tone.now();
+        ['C4', 'E4', 'G4', 'B4', 'C5'].forEach((n, i) => {
+          this.synth.triggerAttackRelease(n, '16n', now + i * 0.06);
+        });
+      }
+
+      playSplash() {
+        if (!this.enabled || !this.initialized) return;
+        const now = Tone.now();
+        this.synth.triggerAttackRelease(['G2', 'C2'], '8n', now);
+      }
+    }
+
+    const sound = new SoundManager();
+
+    /**
+     * ============================================================================
+     * 3. 전역 게임 상태 (Game State)
+     * ============================================================================
+     */
+    const state = {
+      started: false,
+      inCutscene: false,
+      cutsceneTime: 0,
+      wood: 0,
+      stone: 0,
+      gold: 0,
+      carryList: [], // ['wood', 'stone', ...]
+      maxCarry: CONFIG.MAX_CARRY_CAPACITY,
+      moveSpeed: CONFIG.PLAYER_MOVE_SPEED,
+      harvestSpeedMult: 1.0,
+      upgradeLevel: 1,
+
+      // 해금 상태
+      unlockedEast: false,
+      unlockedNorth: false,
+      unlockedHill: false,
+      lighthouseBuilt: false,
+
+      // 일꾼 고용 수
+      lumberjacks: 0,
+      miners: 0,
+
+      // 피버 상태
+      feverCharge: 0, // 0 ~ 100
+      isFever: false,
+      feverTimer: 0,
+
+      // 통계
+      totalHarvested: 0,
+      playTime: 0,
+    };
+
+    /**
+     * ============================================================================
+     * 4. Three.js 씬 & 카메라 & 조명 설정
+     * ============================================================================
+     */
+    const canvas = document.getElementById('game-canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x38bdf8);
+    scene.fog = new THREE.FogExp2(0x38bdf8, 0.011);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
+    const cameraOffset = new THREE.Vector3(0, 18, 17);
+    camera.position.copy(cameraOffset);
+    camera.lookAt(0, 0, 0);
+
+    // 조명
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x0284c7, 0.75);
+    scene.add(hemiLight);
+
+    const dirLight = new THREE.DirectionalLight(0xfffbeb, 0.95);
+    dirLight.position.set(18, 32, 18);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.camera.near = 5;
+    dirLight.shadow.camera.far = 85;
+    const d = 28;
+    dirLight.shadow.camera.left = -d;
+    dirLight.shadow.camera.right = d;
+    dirLight.shadow.camera.top = d;
+    dirLight.shadow.camera.bottom = -d;
+    scene.add(dirLight);
+
+    // 바다 평면
+    const oceanGeo = new THREE.PlaneGeometry(300, 300);
+    const oceanMat = new THREE.MeshStandardMaterial({
+      color: 0x0ea5e9,
+      roughness: 0.25,
+      metalness: 0.1
+    });
+    const ocean = new THREE.Mesh(oceanGeo, oceanMat);
+    ocean.rotation.x = -Math.PI / 2;
+    ocean.position.y = -0.6;
+    ocean.receiveShadow = true;
+    scene.add(ocean);
+
+    /**
+     * ============================================================================
+     * 5. 유틸리티 & UI 알림 헬퍼
+     * ============================================================================
+     */
+    const labelsContainer = document.getElementById('world-labels-container');
+    const worldLabels = [];
+
+    function createWorldLabel(htmlContent, offsetY = 2.2) {
+      const el = document.createElement('div');
+      el.className = 'world-label bg-slate-900/85 text-white text-xs font-bold px-2.5 py-1.5 rounded-xl border border-white/25 shadow-md whitespace-nowrap text-center';
+      el.innerHTML = htmlContent;
+      labelsContainer.appendChild(el);
+      const item = { el, targetPos: new THREE.Vector3(), offsetY, visible: true };
+      worldLabels.push(item);
+      return item;
+    }
+
+    function showToast(msg, colorClass = 'bg-slate-900/90 text-white border-amber-400') {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = `toast-anim px-4 py-2.5 rounded-2xl border-2 shadow-xl font-bold text-sm sm:text-base text-center ${colorClass}`;
+      toast.textContent = msg;
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transition = 'opacity 0.3s';
+        setTimeout(() => toast.remove(), 300);
+      }, 2800);
+    }
+
+    // 파티클 시스템
+    const particles = [];
+    const particleGeo = new THREE.BoxGeometry(0.22, 0.22, 0.22);
+
+    function spawnParticles(pos, colorHex, count = 7) {
+      const mat = new THREE.MeshStandardMaterial({ color: colorHex });
+      for (let i = 0; i < count; i++) {
+        const mesh = new THREE.Mesh(particleGeo, mat);
+        mesh.position.copy(pos);
+        mesh.position.y += 0.8;
+        scene.add(mesh);
+        particles.push({
+          mesh,
+          vel: new THREE.Vector3(
+            (Math.random() - 0.5) * 6,
+            Math.random() * 5 + 2.5,
+            (Math.random() - 0.5) * 6
+          ),
+          life: 0.75
+        });
+      }
+    }
+
+    /**
+     * ============================================================================
+     * 6. 섬 지형 & 이동 가능 영역(Walkable Bounds) 정의
+     * ============================================================================
+     */
+    const walkableRects = []; // { minX, maxX, minZ, maxZ }
+
+    function createIslandBlock(x, y, z, w, h, d, grassColor = 0x4ade80, sandColor = 0xfde68a) {
+      const group = new THREE.Group();
+      group.position.set(x, y, z);
+
+      // 모래 하단
+      const sandMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(w + 0.8, h * 0.55, d + 0.8),
+        new THREE.MeshStandardMaterial({ color: sandColor, roughness: 0.85 })
+      );
+      sandMesh.position.y = -h * 0.25;
+      sandMesh.receiveShadow = true;
+      group.add(sandMesh);
+
+      // 잔디 상단
+      const grassMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(w, h * 0.5, d),
+        new THREE.MeshStandardMaterial({ color: grassColor, roughness: 0.8 })
+      );
+      grassMesh.position.y = h * 0.1;
+      grassMesh.receiveShadow = true;
+      grassMesh.castShadow = true;
+      group.add(grassMesh);
+
+      scene.add(group);
+      return group;
+    }
+
+    // 1) 시작 섬 (중앙 남쪽)
+    createIslandBlock(0, 0, 0, 13, 1.0, 13, 0x4ade80);
+    walkableRects.push({ minX: -6.0, maxX: 6.0, minZ: -6.0, maxZ: 6.0 });
+
+    // 캠프파이어 & 중앙 자원 보관함
+    const campfireGroup = new THREE.Group();
+    campfireGroup.position.set(0, 0.35, -1.2);
+    scene.add(campfireGroup);
+
+    for (let i = 0; i < 6; i++) {
+      const ang = (i / 6) * Math.PI * 2;
+      const stone = new THREE.Mesh(
+        new THREE.DodecahedronGeometry(0.28),
+        new THREE.MeshStandardMaterial({ color: 0x64748b })
+      );
+      stone.position.set(Math.cos(ang) * 0.8, 0.1, Math.sin(ang) * 0.8);
+      campfireGroup.add(stone);
+    }
+    const fireMesh = new THREE.Mesh(
+      new THREE.ConeGeometry(0.55, 1.2, 6),
+      new THREE.MeshStandardMaterial({ color: 0xf97316, emissive: 0xea580c, emissiveIntensity: 0.8 })
+    );
+    fireMesh.position.y = 0.6;
+    campfireGroup.add(fireMesh);
+
+    // 일꾼 자원 납품 보관함 (캠프파이어 우측)
+    const storagePos = new THREE.Vector3(2.3, 0.35, -1.2);
+    const storageBox = new THREE.Mesh(
+      new THREE.BoxGeometry(1.3, 0.9, 1.3),
+      new THREE.MeshStandardMaterial({ color: 0xb45309 })
+    );
+    storageBox.position.copy(storagePos);
+    storageBox.position.y = 0.8;
+    storageBox.castShadow = true;
+    scene.add(storageBox);
+    const storageLabel = createWorldLabel('📦 일꾼 납품함', 1.8);
+    storageLabel.targetPos.copy(storagePos);
+
+    // 2) 동쪽 바위 섬 (2단계 해금)
+    const eastIslandGroup = createIslandBlock(15.5, 0, 0, 10, 1.0, 11, 0x86efac);
+    eastIslandGroup.visible = false;
+    const eastBridgeMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(4.2, 0.3, 2.6),
+      new THREE.MeshStandardMaterial({ color: 0x92400e })
+    );
+    eastBridgeMesh.position.set(8.5, 0.32, 0);
+    eastBridgeMesh.receiveShadow = true;
+    eastBridgeMesh.visible = false;
+    scene.add(eastBridgeMesh);
+
+    // 3) 북쪽 무역 섬 (3단계 해금)
+    const northIslandGroup = createIslandBlock(0, 0, -15.5, 11, 1.0, 10, 0x6ee7b7);
+    northIslandGroup.visible = false;
+    const northBridgeMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(2.6, 0.3, 4.2),
+      new THREE.MeshStandardMaterial({ color: 0x92400e })
+    );
+    northBridgeMesh.position.set(0, 0.32, -8.5);
+    northBridgeMesh.receiveShadow = true;
+    northBridgeMesh.visible = false;
+    scene.add(northBridgeMesh);
+
+    // 4) 서쪽 등대 언덕 (4단계 해금)
+    const westIslandGroup = createIslandBlock(-15.5, 0, 0, 10, 1.0, 10, 0xa7f3d0);
+    westIslandGroup.visible = false;
+    const westBridgeMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(4.2, 0.3, 2.6),
+      new THREE.MeshStandardMaterial({ color: 0x92400e })
+    );
+    westBridgeMesh.position.set(-8.5, 0.32, 0);
+    westBridgeMesh.receiveShadow = true;
+    westBridgeMesh.visible = false;
+    scene.add(westBridgeMesh);
+
+    function isPositionWalkable(x, z) {
+      for (const r of walkableRects) {
+        if (x >= r.minX && x <= r.maxX && z >= r.minZ && z <= r.maxZ) {
+          return true;
+        }
+      }
+      // 놀러 간 이웃 섬 위도 걸을 수 있음
+      return remoteWalkable(x, z);
+    }
+
+    /**
+     * ============================================================================
+     * 7. 플레이어 캐릭터 & 등 뒤 적재 스택 (Visual Stack)
+     * ============================================================================
+     */
+    const player = {
+      group: new THREE.Group(),
+      pos: new THREE.Vector3(0, 0.35, 3.0),
+      rotY: 0,
+      walkAnimTime: 0,
+      swingTimer: 0,
+      harvestCooldown: 0,
+      stackMeshes: [],
+    };
+
+    function buildPlayerMesh() {
+      // 몸통
+      const body = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.42, 0.48, 1.0, 12),
+        new THREE.MeshStandardMaterial({ color: 0x2563eb })
+      );
+      body.position.y = 0.65;
+      body.castShadow = true;
+      player.group.add(body);
+
+      // 머리
+      const head = new THREE.Mesh(
+        new THREE.SphereGeometry(0.42, 16, 16),
+        new THREE.MeshStandardMaterial({ color: 0xffedd5 })
+      );
+      head.position.y = 1.45;
+      head.castShadow = true;
+      player.group.add(head);
+
+      // 탐험가 모자
+      const hatBrim = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.65, 0.65, 0.08, 16),
+        new THREE.MeshStandardMaterial({ color: 0xd97706 })
+      );
+      hatBrim.position.y = 1.72;
+      player.group.add(hatBrim);
+
+      const hatTop = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.36, 0.42, 0.35, 16),
+        new THREE.MeshStandardMaterial({ color: 0xb45309 })
+      );
+      hatTop.position.y = 1.9;
+      player.group.add(hatTop);
+
+      // 오른팔 & 도끼
+      const armGroup = new THREE.Group();
+      armGroup.position.set(0.55, 1.0, 0);
+      const axeHandle = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.06, 0.06, 0.95),
+        new THREE.MeshStandardMaterial({ color: 0x78350f })
+      );
+      axeHandle.position.set(0, 0.25, 0.3);
+      axeHandle.rotation.x = Math.PI / 3;
+      armGroup.add(axeHandle);
+
+      const axeBlade = new THREE.Mesh(
+        new THREE.BoxGeometry(0.08, 0.32, 0.4),
+        new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.6, roughness: 0.2 })
+      );
+      axeBlade.position.set(0, 0.55, 0.55);
+      armGroup.add(axeBlade);
+
+      player.rightArm = armGroup;
+      player.group.add(armGroup);
+
+      player.group.position.copy(player.pos);
+      scene.add(player.group);
+    }
+
+    buildPlayerMesh();
+
+    function updatePlayerStackVisual() {
+      // 기존 스택 메시 제거
+      for (const m of player.stackMeshes) player.group.remove(m);
+      player.stackMeshes = [];
+
+      const woodMat = new THREE.MeshStandardMaterial({ color: 0xb45309 });
+      const stoneMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8 });
+      const geo = new THREE.BoxGeometry(0.55, 0.14, 0.32);
+
+      state.carryList.forEach((type, idx) => {
+        const mesh = new THREE.Mesh(geo, type === 'wood' ? woodMat : stoneMat);
+        mesh.position.set(0, 0.65 + idx * 0.16, -0.48);
+        mesh.castShadow = true;
+        player.group.add(mesh);
+        player.stackMeshes.push(mesh);
+      });
+    }
+
+    /**
+     * ============================================================================
+     * 8. 채집 자원 오브젝트 (나무/황금나무, 바위/무지개수정)
+     * ============================================================================
+     */
+    const resources = []; // { id, type, x, z, area, hp, maxHp, active, respawnTimer, isGolden, mesh, bounceTime }
+
+    function createTreeMesh(isGolden) {
+      const g = new THREE.Group();
+      const trunk = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.24, 0.34, 1.3, 8),
+        new THREE.MeshStandardMaterial({ color: isGolden ? 0xf59e0b : 0x78350f })
+      );
+      trunk.position.y = 0.65;
+      trunk.castShadow = true;
+      g.add(trunk);
+
+      const leafColor = isGolden ? 0xfacc15 : 0x16a34a;
+      const leafEmissive = isGolden ? 0xca8a04 : 0x000000;
+      const c1 = new THREE.Mesh(
+        new THREE.ConeGeometry(1.15, 1.6, 8),
+        new THREE.MeshStandardMaterial({ color: leafColor, emissive: leafEmissive, emissiveIntensity: isGolden ? 0.45 : 0 })
+      );
+      c1.position.y = 1.75;
+      c1.castShadow = true;
+      g.add(c1);
+
+      const c2 = new THREE.Mesh(
+        new THREE.ConeGeometry(0.85, 1.3, 8),
+        new THREE.MeshStandardMaterial({ color: isGolden ? 0xfef08a : 0x22c55e, emissive: leafEmissive, emissiveIntensity: isGolden ? 0.35 : 0 })
+      );
+      c2.position.y = 2.55;
+      c2.castShadow = true;
+      g.add(c2);
+
+      return g;
+    }
+
+    function createRockMesh(isGolden) {
+      const g = new THREE.Group();
+      const mainRock = new THREE.Mesh(
+        new THREE.DodecahedronGeometry(0.95, 0),
+        new THREE.MeshStandardMaterial({
+          color: isGolden ? 0xc084fc : 0x64748b,
+          emissive: isGolden ? 0x7e22ce : 0x000000,
+          emissiveIntensity: isGolden ? 0.5 : 0,
+          roughness: 0.6
+        })
+      );
+      mainRock.position.y = 0.65;
+      mainRock.scale.set(1.1, 0.85, 1.0);
+      mainRock.castShadow = true;
+      g.add(mainRock);
+
+      const subRock = new THREE.Mesh(
+        new THREE.DodecahedronGeometry(0.55, 0),
+        new THREE.MeshStandardMaterial({
+          color: isGolden ? 0x38bdf8 : 0x94a3b8,
+          emissive: isGolden ? 0x0284c7 : 0x000000,
+          emissiveIntensity: isGolden ? 0.5 : 0
+        })
+      );
+      subRock.position.set(0.65, 0.4, 0.35);
+      subRock.castShadow = true;
+      g.add(subRock);
+
+      return g;
+    }
+
+    function spawnResourceNode(type, x, z, area) {
+      const isGolden = Math.random() < CONFIG.GOLDEN_RESOURCE_CHANCE;
+      const mesh = type === 'wood' ? createTreeMesh(isGolden) : createRockMesh(isGolden);
+      mesh.position.set(x, 0.35, z);
+      mesh.visible = (area === 'start');
+      scene.add(mesh);
+
+      resources.push({
+        type,
+        x,
+        z,
+        area,
+        hp: isGolden ? 4 : 3,
+        maxHp: isGolden ? 4 : 3,
+        active: true,
+        respawnTimer: 0,
+        isGolden,
+        mesh,
+        bounceTime: 0,
+        claimedBy: null,
+      });
+    }
+
+    // 시작 섬 나무 5그루
+    spawnResourceNode('wood', -4.2, -3.8, 'start');
+    spawnResourceNode('wood', -4.5, 1.8, 'start');
+    spawnResourceNode('wood', 4.3, -3.5, 'start');
+    spawnResourceNode('wood', 4.4, 2.5, 'start');
+    spawnResourceNode('wood', -1.8, -4.5, 'start');
+
+    // 동쪽 바위 섬 자원 (바위 4개 + 나무 2그루)
+    spawnResourceNode('stone', 13.5, -3.2, 'east');
+    spawnResourceNode('stone', 17.8, -2.8, 'east');
+    spawnResourceNode('stone', 14.0, 3.2, 'east');
+    spawnResourceNode('stone', 18.0, 3.0, 'east');
+    spawnResourceNode('wood', 18.5, 0.0, 'east');
+
+    // 북쪽 무역 섬 자원
+    spawnResourceNode('wood', -3.8, -17.5, 'north');
+    spawnResourceNode('stone', 3.8, -17.5, 'north');
+
+    function hitResource(res, byPlayer = true) {
+      if (!res.active) return;
+
+      res.hp -= 1;
+      res.bounceTime = 0.25;
+      const pColor = res.isGolden ? 0xfacc15 : (res.type === 'wood' ? 0xb45309 : 0x94a3b8);
+      spawnParticles(res.mesh.position, pColor, 6);
+
+      if (byPlayer) {
+        sound.playChop(res.type === 'stone', res.isGolden);
+        // 피버 게이지 충전
+        if (!state.isFever) {
+          state.feverCharge = Math.min(100, state.feverCharge + (res.isGolden ? 15 : 6));
+          if (state.feverCharge >= 100) {
+            activateFever();
+          }
+        }
+      }
+
+      if (res.hp <= 0) {
+        // 자원 파괴 & 획득
+        res.active = false;
+        res.mesh.visible = false;
+        res.respawnTimer = CONFIG.RESOURCE_RESPAWN_TIME;
+        res.claimedBy = null;
+
+        const yieldAmount = res.isGolden ? 4 : 1;
+        if (res.isGolden && byPlayer) {
+          const bonusGold = 10;
+          state.gold += bonusGold;
+          sound.playCoin();
+          showToast(`✨ 황금 ${res.type === 'wood' ? '나무' : '수정'} 채집! 자원 +${yieldAmount}, 골드 +${bonusGold}!`, 'bg-amber-500 text-white border-yellow-200');
+        }
+
+        if (byPlayer) {
+          for (let i = 0; i < yieldAmount; i++) {
+            if (state.carryList.length < state.maxCarry) {
+              state.carryList.push(res.type);
+              if (res.type === 'wood') state.wood++;
+              else state.stone++;
+              state.totalHarvested++;
+            }
+          }
+          updatePlayerStackVisual();
+        }
+      }
+    }
+
+    /**
+     * ============================================================================
+     * 9. 건설 발판 & 상호작용 존 (Build & Action Zones)
+     * ============================================================================
+     */
+    const zones = []; // { id, x, z, radius, reqWood, reqStone, reqGold, curWood, curStone, curGold, completed, repeatable, labelObj, ringMesh, depositTimer, onComplete, getLabelText, isVisible }
+
+    function createZone(cfg) {
+      const ringGeo = new THREE.RingGeometry(cfg.radius - 0.18, cfg.radius, 32);
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: cfg.color || 0xffffff,
+        side: THREE.DoubleSide
+      });
+      const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+      ringMesh.rotation.x = -Math.PI / 2;
+      ringMesh.position.set(cfg.x, 0.37, cfg.z);
+      scene.add(ringMesh);
+
+      const labelObj = createWorldLabel('', 1.6);
+      labelObj.targetPos.set(cfg.x, 0.37, cfg.z);
+
+      const zone = {
+        ...cfg,
+        curWood: 0,
+        curStone: 0,
+        curGold: 0,
+        completed: false,
+        depositTimer: 0,
+        ringMesh,
+        labelObj,
+      };
+      zones.push(zone);
+      return zone;
+    }
+
+    // 1) 플레이어 업그레이드 작업대 (시작 섬 좌측 상단)
+    createZone({
+      id: 'workbench',
+      x: -3.5,
+      z: -1.2,
+      radius: 1.4,
+      color: 0x38bdf8,
+      repeatable: true,
+      isVisible: () => true,
+      getCost: () => ({ wood: state.upgradeLevel * 8, stone: 0, gold: state.upgradeLevel * 10 }),
+      getLabelText(z) {
+        const c = z.getCost();
+        return `⚒️ 작업대 Lv.${state.upgradeLevel}<br/><span class="text-amber-300">🪵 ${z.curWood}/${c.wood}</span> · <span class="text-yellow-300">🪙 ${z.curGold}/${c.gold}</span>`;
+      },
+      onComplete(z) {
+        state.upgradeLevel++;
+        state.maxCarry += 4;
+        state.moveSpeed += 0.5;
+        state.harvestSpeedMult += 0.2;
+        z.curWood = 0;
+        z.curGold = 0;
+        sound.playBuildComplete();
+        spawnParticles(new THREE.Vector3(z.x, 0.5, z.z), 0x38bdf8, 14);
+        showToast(`⚒️ 장비 업그레이드 Lv.${state.upgradeLevel}! 최대 적재량 ${state.maxCarry}개!`, 'bg-sky-600 text-white border-sky-200');
+      }
+    });
+
+    // 2) 동쪽 다리 건설 발판 (시작 섬 우측)
+    createZone({
+      id: 'bridge_east',
+      x: 5.2,
+      z: 0,
+      radius: 1.45,
+      color: 0xfbbf24,
+      repeatable: false,
+      isVisible: () => !state.unlockedEast,
+      getCost: () => ({ wood: 15, stone: 0, gold: 0 }),
+      getLabelText(z) {
+        return `🌉 동쪽 바위섬 다리<br/><span class="text-amber-300">🪵 ${z.curWood} / 15</span>`;
+      },
+      onComplete(z) {
+        state.unlockedEast = true;
+        eastIslandGroup.visible = true;
+        eastBridgeMesh.visible = true;
+        walkableRects.push({ minX: 6.0, maxX: 20.0, minZ: -5.0, maxZ: 5.0 });
+        resources.forEach(r => { if (r.area === 'east') r.mesh.visible = true; });
+        sound.playBuildComplete();
+        spawnParticles(new THREE.Vector3(8.5, 0.8, 0), 0xfbbf24, 20);
+        showToast('🌉 동쪽 바위섬 해금! 석재(🪨) 채집과 벌목꾼 고용이 열렸습니다!', 'bg-emerald-600 text-white border-emerald-200');
+      }
+    });
+
+    // 3) 꼬마 벌목꾼 오두막 (동쪽 섬 중앙)
+    const lumberHutGroup = new THREE.Group();
+    lumberHutGroup.position.set(15.5, 0.35, -3.5);
+    lumberHutGroup.visible = false;
+    scene.add(lumberHutGroup);
+    const hutBody1 = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.3, 1.6), new THREE.MeshStandardMaterial({ color: 0xb45309 }));
+    hutBody1.position.y = 0.65;
+    lumberHutGroup.add(hutBody1);
+    const hutRoof1 = new THREE.Mesh(new THREE.ConeGeometry(1.5, 1.0, 4), new THREE.MeshStandardMaterial({ color: 0xdc2626 }));
+    hutRoof1.position.y = 1.75;
+    hutRoof1.rotation.y = Math.PI / 4;
+    lumberHutGroup.add(hutRoof1);
+
+    createZone({
+      id: 'hire_lumberjack',
+      x: 15.5,
+      z: -1.6,
+      radius: 1.4,
+      color: 0xf87171,
+      repeatable: true,
+      isVisible: () => state.unlockedEast && state.lumberjacks < CONFIG.WORKER_MAX_LUMBERJACKS,
+      getCost: () => ({ wood: 10, stone: 0, gold: CONFIG.WORKER_HIRE_COST + state.lumberjacks * 15 }),
+      getLabelText(z) {
+        const c = z.getCost();
+        return `🪓 벌목꾼 고용 (${state.lumberjacks}/${CONFIG.WORKER_MAX_LUMBERJACKS})<br/><span class="text-amber-300">🪵 ${z.curWood}/${c.wood}</span> · <span class="text-yellow-300">🪙 ${z.curGold}/${c.gold}</span>`;
+      },
+      onComplete(z) {
+        lumberHutGroup.visible = true;
+        z.curWood = 0;
+        z.curGold = 0;
+        spawnWorker('wood');
+        sound.playBuildComplete();
+        showToast('🐾 귀여운 꼬마 벌목꾼이 일을 시작했습니다!', 'bg-red-500 text-white border-amber-200');
+      }
+    });
+
+    // 4) 북쪽 다리 건설 발판 (시작 섬 북쪽)
+    createZone({
+      id: 'bridge_north',
+      x: 0,
+      z: -5.2,
+      radius: 1.45,
+      color: 0xfbbf24,
+      repeatable: false,
+      isVisible: () => state.unlockedEast && !state.unlockedNorth,
+      getCost: () => ({ wood: 20, stone: 12, gold: 0 }),
+      getLabelText(z) {
+        return `🌉 북쪽 무역섬 다리<br/><span class="text-amber-300">🪵 ${z.curWood}/20</span> · <span class="text-slate-200">🪨 ${z.curStone}/12</span>`;
+      },
+      onComplete(z) {
+        state.unlockedNorth = true;
+        northIslandGroup.visible = true;
+        northBridgeMesh.visible = true;
+        walkableRects.push({ minX: -5.0, maxX: 5.0, minZ: -20.0, maxZ: -6.0 });
+        resources.forEach(r => { if (r.area === 'north') r.mesh.visible = true; });
+        sound.playBuildComplete();
+        spawnParticles(new THREE.Vector3(0, 0.8, -8.5), 0xfbbf24, 20);
+        showToast('⛵ 북쪽 무역섬 해금! 자원을 팔아 골드를 벌고 광부를 고용하세요!', 'bg-emerald-600 text-white border-emerald-200');
+      }
+    });
+
+    // 5) 무역 부두 판매 발판 (북쪽 섬 좌측)
+    createZone({
+      id: 'trade_dock',
+      x: -2.8,
+      z: -13.0,
+      radius: 1.5,
+      color: 0xfacc15,
+      repeatable: true,
+      isVisible: () => state.unlockedNorth,
+      getCost: () => ({ wood: 0, stone: 0, gold: 0 }),
+      getLabelText() {
+        return `🪙 자원 판매 부두<br/><span class="text-yellow-300">🪵=3🪙 / 🪨=5🪙</span>`;
+      },
+      onComplete() {}
+    });
+
+    // 6) 꼬마 광부 오두막 (북쪽 섬 우측)
+    const minerHutGroup = new THREE.Group();
+    minerHutGroup.position.set(3.2, 0.35, -14.5);
+    minerHutGroup.visible = false;
+    scene.add(minerHutGroup);
+    const hutBody2 = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.3, 1.6), new THREE.MeshStandardMaterial({ color: 0x475569 }));
+    hutBody2.position.y = 0.65;
+    minerHutGroup.add(hutBody2);
+    const hutRoof2 = new THREE.Mesh(new THREE.ConeGeometry(1.5, 1.0, 4), new THREE.MeshStandardMaterial({ color: 0xeab308 }));
+    hutRoof2.position.y = 1.75;
+    hutRoof2.rotation.y = Math.PI / 4;
+    minerHutGroup.add(hutRoof2);
+
+    createZone({
+      id: 'hire_miner',
+      x: 3.2,
+      z: -12.6,
+      radius: 1.4,
+      color: 0xfacc15,
+      repeatable: true,
+      isVisible: () => state.unlockedNorth && state.miners < CONFIG.WORKER_MAX_MINERS,
+      getCost: () => ({ wood: 0, stone: 10, gold: CONFIG.WORKER_HIRE_COST + 10 + state.miners * 15 }),
+      getLabelText(z) {
+        const c = z.getCost();
+        return `⛏️ 광부 고용 (${state.miners}/${CONFIG.WORKER_MAX_MINERS})<br/><span class="text-slate-200">🪨 ${z.curStone}/${c.stone}</span> · <span class="text-yellow-300">🪙 ${z.curGold}/${c.gold}</span>`;
+      },
+      onComplete(z) {
+        minerHutGroup.visible = true;
+        z.curStone = 0;
+        z.curGold = 0;
+        spawnWorker('stone');
+        sound.playBuildComplete();
+        showToast('🐾 귀여운 꼬마 광부가 출근했습니다!', 'bg-amber-600 text-white border-yellow-200');
+      }
+    });
+
+    // 7) 서쪽 등대 섬 다리 (시작 섬 좌측)
+    createZone({
+      id: 'bridge_west',
+      x: -5.2,
+      z: 0,
+      radius: 1.45,
+      color: 0x38bdf8,
+      repeatable: false,
+      isVisible: () => state.unlockedNorth && !state.unlockedHill,
+      getCost: () => ({ wood: 25, stone: 20, gold: 0 }),
+      getLabelText(z) {
+        return `🌉 등대 섬 다리<br/><span class="text-amber-300">🪵 ${z.curWood}/25</span> · <span class="text-slate-200">🪨 ${z.curStone}/20</span>`;
+      },
+      onComplete(z) {
+        state.unlockedHill = true;
+        westIslandGroup.visible = true;
+        westBridgeMesh.visible = true;
+        walkableRects.push({ minX: -20.0, maxX: -6.0, minZ: -4.5, maxZ: 4.5 });
+        sound.playBuildComplete();
+        spawnParticles(new THREE.Vector3(-8.5, 0.8, 0), 0x38bdf8, 20);
+        showToast('🗼 등대 섬 연결 완료! 이제 최종 등대를 건설할 수 있습니다!', 'bg-sky-600 text-white border-sky-200');
+      }
+    });
+
+    // 8) 최종 등대 건설 발판 (서쪽 섬 중앙)
+    const lighthouseGroup = new THREE.Group();
+    lighthouseGroup.position.set(-15.5, 0.35, -1.5);
+    lighthouseGroup.visible = false;
+    scene.add(lighthouseGroup);
+
+    const lhBase = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.8, 4.8, 12), new THREE.MeshStandardMaterial({ color: 0xf8fafc }));
+    lhBase.position.y = 2.4;
+    lhBase.castShadow = true;
+    lighthouseGroup.add(lhBase);
+
+    const lhStripe = new THREE.Mesh(new THREE.CylinderGeometry(1.52, 1.68, 1.5, 12), new THREE.MeshStandardMaterial({ color: 0xef4444 }));
+    lhStripe.position.y = 2.4;
+    lighthouseGroup.add(lhStripe);
+
+    const lhTop = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.95, 0.95, 1.1, 12),
+      new THREE.MeshStandardMaterial({ color: 0xfef08a, emissive: 0xfacc15, emissiveIntensity: 1.0 })
+    );
+    lhTop.position.y = 5.3;
+    lighthouseGroup.add(lhTop);
+
+    const lhRoof = new THREE.Mesh(new THREE.ConeGeometry(1.2, 1.1, 12), new THREE.MeshStandardMaterial({ color: 0xef4444 }));
+    lhRoof.position.y = 6.35;
+    lighthouseGroup.add(lhRoof);
+
+    createZone({
+      id: 'build_lighthouse',
+      x: -15.5,
+      z: 1.8,
+      radius: 1.65,
+      color: 0xfef08a,
+      repeatable: false,
+      isVisible: () => state.unlockedHill && !state.lighthouseBuilt,
+      getCost: () => ({ wood: 35, stone: 30, gold: 30 }),
+      getLabelText(z) {
+        return `🗼 최종 목표: 등대 건설<br/><span class="text-amber-300">🪵 ${z.curWood}/35</span> · <span class="text-slate-200">🪨 ${z.curStone}/30</span> · <span class="text-yellow-300">🪙 ${z.curGold}/30</span>`;
+      },
+      onComplete(z) {
+        state.lighthouseBuilt = true;
+        lighthouseGroup.visible = true;
+        sound.playFever();
+        spawnParticles(new THREE.Vector3(-15.5, 3.0, -1.5), 0xfacc15, 35);
+
+        setTimeout(() => {
+          document.getElementById('victory-stats').innerHTML =
+            `⏱️ 클리어 시간: ${Math.floor(state.playTime)}초<br/>🪓 총 채집 자원: ${state.totalHarvested}개 · 🐾 고용 일꾼: ${state.lumberjacks + state.miners}명`;
+          const modal = document.getElementById('victory-modal');
+          modal.classList.remove('hidden');
+          modal.classList.add('flex');
+        }, 900);
+      }
+    });
+
+    /**
+     * ============================================================================
+     * 10. 귀여운 NPC 일꾼 시스템 (꼬마 벌목꾼 & 꼬마 광부)
+     * ============================================================================
+     */
+    const workers = []; // { role: 'wood'|'stone', group, pos, carry, targetRes, state: 'seek'|'harvest'|'return', timer, wobbleTime, labelObj }
+
+    function spawnWorker(role) {
+      if (role === 'wood') state.lumberjacks++;
+      else state.miners++;
+
+      const group = new THREE.Group();
+      const startPos = role === 'wood'
+        ? new THREE.Vector3(15.5, 0.35, -1.5)
+        : new THREE.Vector3(3.2, 0.35, -12.5);
+
+      // 아담한 2등신 몸통
+      const body = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.3, 0.36, 0.65, 10),
+        new THREE.MeshStandardMaterial({ color: role === 'wood' ? 0xdc2626 : 0x3b82f6 })
+      );
+      body.position.y = 0.42;
+      body.castShadow = true;
+      group.add(body);
+
+      // 머리
+      const head = new THREE.Mesh(
+        new THREE.SphereGeometry(0.34, 12, 12),
+        new THREE.MeshStandardMaterial({ color: 0xffedd5 })
+      );
+      head.position.y = 0.98;
+      head.castShadow = true;
+      group.add(head);
+
+      // 모자 (비니 / 안전모)
+      const cap = new THREE.Mesh(
+        new THREE.SphereGeometry(0.35, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+        new THREE.MeshStandardMaterial({ color: role === 'wood' ? 0x991b1b : 0xfacc15 })
+      );
+      cap.position.y = 1.03;
+      group.add(cap);
+
+      group.position.copy(startPos);
+      scene.add(group);
+
+      const labelObj = createWorldLabel('🎵', 1.65);
+      labelObj.targetPos.copy(startPos);
+
+      workers.push({
+        role,
+        group,
+        pos: startPos.clone(),
+        carry: 0,
+        targetRes: null,
+        aiState: 'seek',
+        timer: 0,
+        wobbleTime: Math.random() * 5,
+        labelObj
+      });
+
+      updateHUD();
+    }
+
+    function moveEntityTowards(pos, targetPos, speed, dt) {
+      const dx = targetPos.x - pos.x;
+      const dz = targetPos.z - pos.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist < 0.05) return 0;
+
+      // 다리 경유 웨이포인트 처리 (섬 간 이동 시 물 위를 가로지르지 않도록)
+      let waypoint = targetPos;
+      const inEast = pos.x > 6.5;
+      const targetInEast = targetPos.x > 6.5;
+      if (inEast && !targetInEast) waypoint = new THREE.Vector3(6.0, 0.35, 0);
+      else if (!inEast && targetInEast) waypoint = new THREE.Vector3(6.0, 0.35, 0);
+
+      const inNorth = pos.z < -6.5;
+      const targetInNorth = targetPos.z < -6.5;
+      if (inNorth && !targetInNorth) waypoint = new THREE.Vector3(0, 0.35, -6.0);
+      else if (!inNorth && targetInNorth) waypoint = new THREE.Vector3(0, 0.35, -6.0);
+
+      const wdx = waypoint.x - pos.x;
+      const wdz = waypoint.z - pos.z;
+      const wdist = Math.hypot(wdx, wdz);
+      if (wdist > 0.01) {
+        const step = Math.min(wdist, speed * dt);
+        pos.x += (wdx / wdist) * step;
+        pos.z += (wdz / wdist) * step;
+      }
+      return dist;
+    }
+
+    function updateWorkers(dt) {
+      const speedMult = state.isFever ? CONFIG.FEVER_SPEED_MULTIPLIER : 1.0;
+
+      for (const w of workers) {
+        w.wobbleTime += dt * 10 * speedMult;
+        w.labelObj.targetPos.copy(w.pos);
+
+        if (w.aiState === 'seek') {
+          // 담당 자원 중 가장 가까운 활성 노드 탐색 (황금 자원 우선)
+          let best = null;
+          let bestScore = Infinity;
+          for (const r of resources) {
+            if (!r.active || !r.mesh.visible || r.type !== w.role) continue;
+            const d = Math.hypot(r.x - w.pos.x, r.z - w.pos.z);
+            const score = r.isGolden ? d * 0.4 : d;
+            if (score < bestScore) {
+              bestScore = score;
+              best = r;
+            }
+          }
+
+          if (!best) {
+            w.labelObj.el.textContent = '💦';
+            w.group.rotation.z = 0;
+            continue;
+          }
+
+          w.targetRes = best;
+          w.labelObj.el.textContent = state.isFever ? '🔥' : (best.isGolden ? '❗' : '🎵');
+
+          const dist = moveEntityTowards(w.pos, new THREE.Vector3(best.x, 0.35, best.z), CONFIG.WORKER_MOVE_SPEED * speedMult, dt);
+          w.group.position.copy(w.pos);
+          w.group.rotation.z = Math.sin(w.wobbleTime) * 0.14; // 뒤뚱뒤뚱 애니메이션
+
+          if (dist <= 1.35) {
+            w.aiState = 'harvest';
+            w.timer = 0;
+            w.group.rotation.z = 0;
+          }
+        } else if (w.aiState === 'harvest') {
+          if (!w.targetRes || !w.targetRes.active) {
+            w.aiState = w.carry >= CONFIG.WORKER_CARRY_CAPACITY ? 'return' : 'seek';
+            continue;
+          }
+
+          w.labelObj.el.textContent = state.isFever ? '🔥' : (w.role === 'wood' ? '🪓' : '⛏️');
+          w.timer += dt * speedMult;
+          w.group.position.y = 0.35 + Math.abs(Math.sin(w.timer * 8)) * 0.15;
+
+          if (w.timer >= CONFIG.WORKER_HARVEST_INTERVAL) {
+            w.timer = 0;
+            const wasActive = w.targetRes.active;
+            const isGolden = w.targetRes.isGolden;
+            hitResource(w.targetRes, false);
+
+            if (wasActive && !w.targetRes.active) {
+              w.carry += isGolden ? 3 : 1;
+              if (w.carry >= CONFIG.WORKER_CARRY_CAPACITY) {
+                w.aiState = 'return';
+              } else {
+                w.aiState = 'seek';
+              }
+            }
+          }
+        } else if (w.aiState === 'return') {
+          w.labelObj.el.textContent = `📦 ${w.carry}`;
+          const dist = moveEntityTowards(w.pos, storagePos, CONFIG.WORKER_MOVE_SPEED * speedMult * 1.1, dt);
+          w.group.position.copy(w.pos);
+          w.group.rotation.z = Math.sin(w.wobbleTime) * 0.16;
+
+          if (dist <= 1.2) {
+            // 보관함 납품 완료
+            if (w.role === 'wood') state.wood += w.carry;
+            else state.stone += w.carry;
+            state.totalHarvested += w.carry;
+            spawnParticles(storagePos, w.role === 'wood' ? 0xb45309 : 0x94a3b8, 5);
+            w.carry = 0;
+            w.group.rotation.z = 0;
+            w.aiState = 'seek';
+          }
+        }
+      }
+    }
+
+    /**
+     * ============================================================================
+     * 11. 5가지 미니 이벤트 & 보물상자 시스템
+     * ============================================================================
+     */
+    // (1) 해변에 떠밀려온 표류 보물상자 (주기: 120 ~ 180초)
+    const treasureChest = {
+      active: false,
+      timer: 130, // 첫 상자는 약 2분 10초 뒤 등장
+      openProgress: 0,
+      group: new THREE.Group(),
+      labelObj: null,
+    };
+
+    function buildTreasureChest() {
+      const base = new THREE.Mesh(
+        new THREE.BoxGeometry(1.1, 0.65, 0.8),
+        new THREE.MeshStandardMaterial({ color: 0x92400e })
+      );
+      base.position.y = 0.32;
+      base.castShadow = true;
+      treasureChest.group.add(base);
+
+      const lid = new THREE.Mesh(
+        new THREE.BoxGeometry(1.14, 0.25, 0.84),
+        new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.4 })
+      );
+      lid.position.y = 0.72;
+      treasureChest.group.add(lid);
+
+      treasureChest.group.visible = false;
+      scene.add(treasureChest.group);
+
+      treasureChest.labelObj = createWorldLabel('🏴‍☠️ 표류 보물상자!', 1.5);
+      treasureChest.labelObj.visible = false;
+    }
+    buildTreasureChest();
+
+    function spawnTreasureChest() {
+      const spots = [
+        new THREE.Vector3(-4.5, 0.35, 4.8),
+        new THREE.Vector3(4.5, 0.35, 4.8),
+      ];
+      if (state.unlockedEast) spots.push(new THREE.Vector3(18.5, 0.35, 4.2));
+      if (state.unlockedNorth) spots.push(new THREE.Vector3(-3.8, 0.35, -18.8));
+
+      const spot = spots[Math.floor(Math.random() * spots.length)];
+      treasureChest.group.position.copy(spot);
+      treasureChest.group.visible = true;
+      treasureChest.active = true;
+      treasureChest.openProgress = 0;
+      treasureChest.labelObj.targetPos.copy(spot);
+      treasureChest.labelObj.visible = true;
+      treasureChest.labelObj.el.innerHTML = '🏴‍☠️ 표류 보물상자! (다가가세요)';
+
+      spawnParticles(spot, 0x38bdf8, 12);
+      showToast('🏴‍☠️ 해변에 반짝이는 보물상자가 떠밀려왔습니다!', 'bg-amber-600 text-white border-yellow-300');
+    }
+
+    // (2) 장난꾸러기 황금 게 추격전
+    const goldenCrab = {
+      active: false,
+      timer: CONFIG.CRAB_SPAWN_INTERVAL,
+      group: new THREE.Group(),
+      pos: new THREE.Vector3(),
+      dir: new THREE.Vector3(),
+      labelObj: null,
+    };
+
+    function buildGoldenCrab() {
+      const shell = new THREE.Mesh(
+        new THREE.SphereGeometry(0.45, 12, 10),
+        new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0xca8a04, emissiveIntensity: 0.4, metalness: 0.5 })
+      );
+      shell.scale.set(1.2, 0.6, 0.9);
+      shell.position.y = 0.35;
+      goldenCrab.group.add(shell);
+
+      goldenCrab.group.visible = false;
+      scene.add(goldenCrab.group);
+      goldenCrab.labelObj = createWorldLabel('🦀 황금 게! (잡아라!)', 1.2);
+      goldenCrab.labelObj.visible = false;
+    }
+    buildGoldenCrab();
+
+    function spawnGoldenCrab() {
+      goldenCrab.active = true;
+      goldenCrab.pos.set(-5.5, 0.35, 4.2);
+      goldenCrab.dir.set(1, 0, -0.35).normalize();
+      goldenCrab.group.position.copy(goldenCrab.pos);
+      goldenCrab.group.visible = true;
+      goldenCrab.labelObj.targetPos.copy(goldenCrab.pos);
+      goldenCrab.labelObj.visible = true;
+      showToast('🦀 반짝이는 황금 게가 나타났습니다! 쫓아가서 잡으세요!', 'bg-yellow-500 text-slate-900 border-white');
+    }
+
+    // (3) 캠프파이어 피버 타임 발동
+    function activateFever() {
+      state.isFever = true;
+      state.feverCharge = 100;
+      state.feverTimer = CONFIG.FEVER_DURATION;
+      document.getElementById('fever-overlay').classList.remove('hidden');
+      sound.playFever();
+      showToast('🔥 캠프파이어 피버 타임! 15초간 모든 이동·채집 속도 2배!', 'bg-gradient-to-r from-orange-500 to-red-600 text-white border-yellow-300');
+    }
+
+    // (4) 떠돌이 상인 펠리컨 깜짝 거래
+    const merchant = {
+      active: false,
+      timer: CONFIG.MERCHANT_SPAWN_INTERVAL,
+      stayTimer: 0,
+      reqType: 'wood',
+      reqAmount: 10,
+      rewardGold: 60,
+      group: new THREE.Group(),
+      zone: null,
+    };
+
+    function buildMerchant() {
+      const boat = new THREE.Mesh(
+        new THREE.BoxGeometry(1.6, 0.45, 2.6),
+        new THREE.MeshStandardMaterial({ color: 0xfef3c7 })
+      );
+      boat.position.set(-4.8, -0.25, -18.5);
+      merchant.group.add(boat);
+
+      const pelican = new THREE.Mesh(
+        new THREE.ConeGeometry(0.45, 1.1, 8),
+        new THREE.MeshStandardMaterial({ color: 0xffffff })
+      );
+      pelican.position.set(-4.8, 0.45, -18.5);
+      merchant.group.add(pelican);
+
+      merchant.group.visible = false;
+      scene.add(merchant.group);
+
+      merchant.zone = createZone({
+        id: 'merchant_trade',
+        x: -3.5,
+        z: -18.2,
+        radius: 1.45,
+        color: 0xf472b6,
+        repeatable: false,
+        isVisible: () => merchant.active,
+        getCost: () => ({
+          wood: merchant.reqType === 'wood' ? merchant.reqAmount : 0,
+          stone: merchant.reqType === 'stone' ? merchant.reqAmount : 0,
+          gold: 0
+        }),
+        getLabelText(z) {
+          const icon = merchant.reqType === 'wood' ? '🪵' : '🪨';
+          const cur = merchant.reqType === 'wood' ? z.curWood : z.curStone;
+          return `⛵ 펠리컨 특가 (${Math.ceil(merchant.stayTimer)}초)<br/>${icon} ${cur}/${merchant.reqAmount} ➔ <span class="text-yellow-300">🪙 +${merchant.rewardGold}</span>`;
+        },
+        onComplete(z) {
+          state.gold += merchant.rewardGold;
+          merchant.active = false;
+          merchant.group.visible = false;
+          z.curWood = 0;
+          z.curStone = 0;
+          sound.playCoin();
+          spawnParticles(new THREE.Vector3(z.x, 0.8, z.z), 0xfacc15, 18);
+          showToast(`⛵ 펠리컨 상인과 거래 성공! 보너스 골드 +${merchant.rewardGold} 획득!`, 'bg-pink-600 text-white border-yellow-200');
+        }
+      });
+    }
+    buildMerchant();
+
+    function spawnMerchant() {
+      merchant.active = true;
+      merchant.stayTimer = CONFIG.MERCHANT_STAY_DURATION;
+      merchant.reqType = Math.random() < 0.5 ? 'wood' : 'stone';
+      merchant.reqAmount = merchant.reqType === 'wood' ? 10 : 8;
+      merchant.rewardGold = merchant.reqType === 'wood' ? 60 : 80;
+      merchant.zone.curWood = 0;
+      merchant.zone.curStone = 0;
+      merchant.zone.completed = false;
+      merchant.group.visible = true;
+      showToast('⛵ 북쪽 부두에 떠돌이 펠리컨 상인이 도착했습니다! (2배 특가 거래)', 'bg-pink-600 text-white border-pink-200');
+    }
+
+    function updateEvents(dt) {
+      // 1) 피버 타임 타이머
+      if (state.isFever) {
+        state.feverTimer -= dt;
+        state.feverCharge = Math.max(0, (state.feverTimer / CONFIG.FEVER_DURATION) * 100);
+        if (state.feverTimer <= 0) {
+          state.isFever = false;
+          state.feverCharge = 0;
+          document.getElementById('fever-overlay').classList.add('hidden');
+        }
+      }
+
+      // 2) 보물상자 (120 ~ 180초 주기)
+      if (!treasureChest.active) {
+        treasureChest.timer -= dt;
+        if (treasureChest.timer <= 0) {
+          spawnTreasureChest();
+          treasureChest.timer = CONFIG.CHEST_SPAWN_MIN + Math.random() * (CONFIG.CHEST_SPAWN_MAX - CONFIG.CHEST_SPAWN_MIN);
+        }
+      } else {
+        treasureChest.group.rotation.y += dt * 1.2;
+        const dist = Math.hypot(player.pos.x - treasureChest.group.position.x, player.pos.z - treasureChest.group.position.z);
+        if (dist <= 1.8) {
+          treasureChest.openProgress += dt;
+          const pct = Math.min(100, Math.floor((treasureChest.openProgress / 1.2) * 100));
+          treasureChest.labelObj.el.innerHTML = `🏴‍☠️ 상자 여는 중... ${pct}%`;
+          if (treasureChest.openProgress >= 1.2) {
+            treasureChest.active = false;
+            treasureChest.group.visible = false;
+            treasureChest.labelObj.visible = false;
+
+            const goldGain = 35;
+            state.gold += goldGain;
+            state.wood += 8;
+            sound.playFever();
+            spawnParticles(treasureChest.group.position, 0xfacc15, 22);
+            showToast(`🎉 보물상자 개봉! 골드 +${goldGain}, 목재 +8 획득!`, 'bg-amber-500 text-white border-yellow-200');
+          }
+        } else {
+          treasureChest.openProgress = Math.max(0, treasureChest.openProgress - dt * 0.5);
+        }
+      }
+
+      // 3) 황금 게 추격전
+      if (!goldenCrab.active) {
+        goldenCrab.timer -= dt;
+        if (goldenCrab.timer <= 0) {
+          goldenCrab.timer = CONFIG.CRAB_SPAWN_INTERVAL;
+          spawnGoldenCrab();
+        }
+      } else {
+        goldenCrab.pos.addScaledVector(goldenCrab.dir, 3.6 * dt);
+        if (goldenCrab.pos.x > 5.5 || goldenCrab.pos.x < -5.5) goldenCrab.dir.x *= -1;
+        if (goldenCrab.pos.z > 5.5 || goldenCrab.pos.z < -5.5) goldenCrab.dir.z *= -1;
+        goldenCrab.group.position.copy(goldenCrab.pos);
+        goldenCrab.group.rotation.y = Math.sin(state.playTime * 15) * 0.4;
+        goldenCrab.labelObj.targetPos.copy(goldenCrab.pos);
+
+        const dist = Math.hypot(player.pos.x - goldenCrab.pos.x, player.pos.z - goldenCrab.pos.z);
+        if (dist <= 1.35) {
+          goldenCrab.active = false;
+          goldenCrab.group.visible = false;
+          goldenCrab.labelObj.visible = false;
+          state.gold += 25;
+          sound.playCoin();
+          spawnParticles(goldenCrab.pos, 0xfacc15, 16);
+          showToast('🦀 황금 게 포획 성공! 보너스 골드 +25 획득!', 'bg-yellow-500 text-slate-900 border-white');
+        }
+      }
+
+      // 4) 떠돌이 상인 펠리컨 (북쪽 섬 해금 이후)
+      if (state.unlockedNorth) {
+        if (!merchant.active) {
+          merchant.timer -= dt;
+          if (merchant.timer <= 0) {
+            merchant.timer = CONFIG.MERCHANT_SPAWN_INTERVAL;
+            spawnMerchant();
+          }
+        } else {
+          merchant.stayTimer -= dt;
+          if (merchant.stayTimer <= 0) {
+            merchant.active = false;
+            merchant.group.visible = false;
+            showToast('⛵ 펠리컨 상인이 다음 섬으로 떠났습니다.', 'bg-slate-800 text-white border-slate-500');
+          }
+        }
+      }
+    }
+
+    /**
+     * ============================================================================
+     * 12. 입력 처리 (키보드 WASD/방향키 + 마우스/터치 가상 조이스틱)
+     * ============================================================================
+     */
+    const keys = {};
+    window.addEventListener('keydown', (e) => { keys[e.code] = true; });
+    window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+    const joystick = {
+      active: false,
+      startX: 0,
+      startY: 0,
+      dx: 0,
+      dy: 0,
+    };
+
+    const joyZone = document.getElementById('joystick-zone');
+    const joyStick = document.getElementById('joystick-stick');
+
+    function onPointerDown(clientX, clientY) {
+      if (!state.started || state.inCutscene) return;
+      joystick.active = true;
+      joystick.startX = clientX;
+      joystick.startY = clientY;
+      joystick.dx = 0;
+      joystick.dy = 0;
+      joyZone.style.left = `${clientX}px`;
+      joyZone.style.top = `${clientY}px`;
+      joyZone.classList.remove('hidden');
+      joyStick.style.transform = 'translate(0px, 0px)';
+    }
+
+    function onPointerMove(clientX, clientY) {
+      if (!joystick.active) return;
+      const maxR = 44;
+      let vx = clientX - joystick.startX;
+      let vy = clientY - joystick.startY;
+      const dist = Math.hypot(vx, vy);
+      if (dist > maxR) {
+        vx = (vx / dist) * maxR;
+        vy = (vy / dist) * maxR;
+      }
+      joystick.dx = vx / maxR;
+      joystick.dy = vy / maxR;
+      joyStick.style.transform = `translate(${vx}px, ${vy}px)`;
+    }
+
+    function onPointerUp() {
+      joystick.active = false;
+      joystick.dx = 0;
+      joystick.dy = 0;
+      joyZone.classList.add('hidden');
+    }
+
+    canvas.addEventListener('mousedown', (e) => onPointerDown(e.clientX, e.clientY));
+    window.addEventListener('mousemove', (e) => onPointerMove(e.clientX, e.clientY));
+    window.addEventListener('mouseup', onPointerUp);
+
+    canvas.addEventListener('touchstart', (e) => {
+      if (e.touches.length > 0) onPointerDown(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: true });
+    window.addEventListener('touchmove', (e) => {
+      if (e.touches.length > 0) onPointerMove(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: true });
+    window.addEventListener('touchend', onPointerUp);
+
+    /**
+     * ============================================================================
+     * 13. HUD & 3D 월드 라벨 투영 업데이트
+     * ============================================================================
+     */
+    const tempProjVec = new THREE.Vector3();
+
+    function updateHUD() {
+      document.getElementById('ui-wood').textContent = state.wood;
+      document.getElementById('ui-stone').textContent = state.stone;
+      document.getElementById('ui-gold').textContent = state.gold;
+
+      const carryEl = document.getElementById('ui-carry');
+      carryEl.textContent = `${state.carryList.length} / ${state.maxCarry}`;
+      carryEl.className = state.carryList.length >= state.maxCarry
+        ? 'font-bold text-rose-400'
+        : 'font-bold text-emerald-300';
+
+      const pct = Math.round(state.feverCharge);
+      document.getElementById('ui-fever-bar').style.width = `${pct}%`;
+      document.getElementById('ui-fever-text').textContent = state.isFever ? 'FEVER!' : `${pct}%`;
+
+      document.getElementById('ui-workers-status').textContent =
+        `🐾 고용된 일꾼: 벌목꾼 ${state.lumberjacks}/${CONFIG.WORKER_MAX_LUMBERJACKS} · 광부 ${state.miners}/${CONFIG.WORKER_MAX_MINERS}`;
+    }
+
+    function updateWorldLabels() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      for (const item of worldLabels) {
+        if (!item.visible) {
+          item.el.style.display = 'none';
+          continue;
+        }
+        tempProjVec.copy(item.targetPos);
+        tempProjVec.y += item.offsetY;
+        tempProjVec.project(camera);
+
+        if (tempProjVec.z > 1) {
+          item.el.style.display = 'none';
+          continue;
+        }
+
+        const sx = (tempProjVec.x * 0.5 + 0.5) * w;
+        const sy = (-(tempProjVec.y * 0.5) + 0.5) * h;
+        item.el.style.display = 'block';
+        item.el.style.left = `${sx}px`;
+        item.el.style.top = `${sy}px`;
+      }
+    }
+
+    /**
+     * ============================================================================
+     * 14. 플레이어 이동 / 채집 / 발판 투입 처리
+     * ============================================================================
+     */
+    function updatePlayer(dt) {
+      let ix = joystick.dx;
+      let iz = joystick.dy;
+
+      if (keys['KeyW'] || keys['ArrowUp']) iz -= 1;
+      if (keys['KeyS'] || keys['ArrowDown']) iz += 1;
+      if (keys['KeyA'] || keys['ArrowLeft']) ix -= 1;
+      if (keys['KeyD'] || keys['ArrowRight']) ix += 1;
+
+      const mag = Math.hypot(ix, iz);
+      const speedMult = state.isFever ? CONFIG.FEVER_SPEED_MULTIPLIER : 1.0;
+
+      if (mag > 0.05) {
+        const nx = ix / Math.max(1, mag);
+        const nz = iz / Math.max(1, mag);
+        const moveStep = state.moveSpeed * speedMult * dt;
+
+        const nextX = player.pos.x + nx * moveStep;
+        const nextZ = player.pos.z + nz * moveStep;
+
+        if (isPositionWalkable(nextX, player.pos.z)) player.pos.x = nextX;
+        if (isPositionWalkable(player.pos.x, nextZ)) player.pos.z = nextZ;
+
+        player.rotY = Math.atan2(nx, nz);
+        player.walkAnimTime += dt * 12 * speedMult;
+        player.group.position.y = 0.35 + Math.abs(Math.sin(player.walkAnimTime)) * 0.14;
+      } else {
+        player.group.position.y = 0.35;
+      }
+
+      player.group.position.x = player.pos.x;
+      player.group.position.z = player.pos.z;
+      player.group.rotation.y = player.rotY;
+
+      // 근접 자원 자동 채집 (적재 한도 여유가 있을 때)
+      player.harvestCooldown = Math.max(0, player.harvestCooldown - dt * state.harvestSpeedMult * speedMult);
+      if (state.carryList.length < state.maxCarry) {
+        let nearestRes = null;
+        let nearestDist = CONFIG.HARVEST_RADIUS;
+        for (const r of resources) {
+          if (!r.active || !r.mesh.visible) continue;
+          const d = Math.hypot(r.x - player.pos.x, r.z - player.pos.z);
+          if (d < nearestDist) {
+            nearestDist = d;
+            nearestRes = r;
+          }
+        }
+
+        if (nearestRes) {
+          player.swingTimer += dt * 14 * speedMult;
+          player.rightArm.rotation.x = Math.sin(player.swingTimer) * 1.1;
+          if (player.harvestCooldown <= 0) {
+            player.harvestCooldown = CONFIG.HARVEST_INTERVAL;
+            hitResource(nearestRes, true);
+          }
+        } else {
+          player.rightArm.rotation.x = 0;
+        }
+      } else {
+        player.rightArm.rotation.x = 0;
+      }
+
+      // 건설/상호작용 발판 위 자원 자동 투입
+      for (const z of zones) {
+        const visible = z.isVisible();
+        z.ringMesh.visible = visible;
+        z.labelObj.visible = visible;
+        if (!visible) continue;
+
+        z.labelObj.el.innerHTML = z.getLabelText(z);
+
+        const dist = Math.hypot(player.pos.x - z.x, player.pos.z - z.z);
+        if (dist <= z.radius) {
+          z.depositTimer += dt;
+          if (z.depositTimer >= CONFIG.DEPOSIT_INTERVAL) {
+            z.depositTimer = 0;
+
+            // 무역 부두: 보유 자원 즉시 판매
+            if (z.id === 'trade_dock') {
+              if (state.wood > 0) {
+                state.wood--;
+                state.gold += 3;
+                const idx = state.carryList.indexOf('wood');
+                if (idx !== -1) state.carryList.splice(idx, 1);
+                updatePlayerStackVisual();
+                sound.playCoin();
+                spawnParticles(new THREE.Vector3(z.x, 0.6, z.z), 0xfacc15, 4);
+              } else if (state.stone > 0) {
+                state.stone--;
+                state.gold += 5;
+                const idx = state.carryList.indexOf('stone');
+                if (idx !== -1) state.carryList.splice(idx, 1);
+                updatePlayerStackVisual();
+                sound.playCoin();
+                spawnParticles(new THREE.Vector3(z.x, 0.6, z.z), 0xfacc15, 4);
+              }
+              continue;
+            }
+
+            // 일반 건설/고용 발판 자원 투입
+            const cost = z.getCost();
+            let deposited = false;
+
+            if (z.curWood < cost.wood && state.wood > 0) {
+              z.curWood++;
+              state.wood--;
+              const idx = state.carryList.indexOf('wood');
+              if (idx !== -1) state.carryList.splice(idx, 1);
+              updatePlayerStackVisual();
+              deposited = true;
+            } else if (z.curStone < cost.stone && state.stone > 0) {
+              z.curStone++;
+              state.stone--;
+              const idx = state.carryList.indexOf('stone');
+              if (idx !== -1) state.carryList.splice(idx, 1);
+              updatePlayerStackVisual();
+              deposited = true;
+            } else if (z.curGold < cost.gold && state.gold > 0) {
+              z.curGold++;
+              state.gold--;
+              deposited = true;
+            }
+
+            if (deposited) {
+              sound.playDeposit();
+              spawnParticles(new THREE.Vector3(z.x, 0.6, z.z), 0xffffff, 3);
+              if (z.curWood >= cost.wood && z.curStone >= cost.stone && z.curGold >= cost.gold) {
+                z.completed = true;
+                z.onComplete(z);
+              }
+            }
+          }
+        }
+      }
+
+      // 카메라 부드러운 추적
+      const desiredCam = player.pos.clone().add(cameraOffset);
+      camera.position.lerp(desiredCam, 0.12);
+      camera.lookAt(player.pos.x, player.pos.y + 0.8, player.pos.z);
+    }
+
+    /**
+     * ============================================================================
+     * 14.5 오프닝 컷신 시스템 (배 침몰 -> 나무 뗏목 표류 -> 무인도 해변 상륙)
+     * ============================================================================
+     */
+    const cutsceneObjects = {
+      group: new THREE.Group(),
+      ship: null,
+      raft: null,
+      splashTimer: 0,
+    };
+
+    function setupCutsceneObjects() {
+      // 1) 침몰하는 범선 (남쪽 바다 한가운데)
+      const ship = new THREE.Group();
+      ship.position.set(-4.5, 0.2, 22.0);
+
+      // 선체
+      const hull = new THREE.Mesh(
+        new THREE.BoxGeometry(2.6, 1.3, 5.4),
+        new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.7 })
+      );
+      hull.castShadow = true;
+      ship.add(hull);
+
+      // 갑판 테두리
+      const deck = new THREE.Mesh(
+        new THREE.BoxGeometry(2.8, 0.25, 5.6),
+        new THREE.MeshStandardMaterial({ color: 0xb45309 })
+      );
+      deck.position.y = 0.7;
+      ship.add(deck);
+
+      // 돛대 & 찢어진 돛
+      const mast = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.14, 0.18, 4.4, 8),
+        new THREE.MeshStandardMaterial({ color: 0x451a03 })
+      );
+      mast.position.set(0, 2.5, -0.3);
+      ship.add(mast);
+
+      const sail = new THREE.Mesh(
+        new THREE.PlaneGeometry(2.5, 2.4),
+        new THREE.MeshStandardMaterial({ color: 0xfef3c7, side: THREE.DoubleSide })
+      );
+      sail.position.set(0, 2.8, -0.2);
+      ship.add(sail);
+
+      cutsceneObjects.ship = ship;
+      cutsceneObjects.group.add(ship);
+
+      // 2) 플레이어가 타고 떠밀려오는 나무 판자(뗏목)
+      const raft = new THREE.Group();
+      for (let i = -1; i <= 1; i++) {
+        const plank = new THREE.Mesh(
+          new THREE.BoxGeometry(0.42, 0.14, 1.6),
+          new THREE.MeshStandardMaterial({ color: 0xd97706 })
+        );
+        plank.position.x = i * 0.45;
+        raft.add(plank);
+      }
+      raft.position.set(-4.0, -0.35, 19.5);
+      cutsceneObjects.raft = raft;
+      cutsceneObjects.group.add(raft);
+
+      scene.add(cutsceneObjects.group);
+    }
+
+    setupCutsceneObjects();
+
+    function startOpeningCutscene() {
+      state.inCutscene = true;
+      state.cutsceneTime = 0;
+      document.getElementById('cutscene-ui').classList.remove('hidden');
+      document.getElementById('cutscene-ui').classList.add('flex');
+
+      // 플레이어를 뗏목 위에 태움
+      player.pos.set(-4.0, -0.2, 19.5);
+      player.group.position.copy(player.pos);
+      player.rotY = Math.PI;
+      sound.playSplash();
+    }
+
+    function endOpeningCutscene() {
+      if (!state.inCutscene) return;
+      state.inCutscene = false;
+      state.started = true;
+
+      // 컷신 UI 숨기기 & 배 제거 (뗏목은 해변가에 흔적으로 남김)
+      document.getElementById('cutscene-ui').classList.add('hidden');
+      document.getElementById('cutscene-ui').classList.remove('flex');
+      if (cutsceneObjects.ship) {
+        cutsceneObjects.group.remove(cutsceneObjects.ship);
+        cutsceneObjects.ship = null;
+      }
+      if (cutsceneObjects.raft) {
+        cutsceneObjects.raft.position.set(0, -0.45, 7.6);
+        cutsceneObjects.raft.rotation.set(0, 0.2, 0);
+      }
+
+      // 플레이어 시작 섬 해변 착지 위치 고정
+      player.pos.set(0, 0.35, 5.4);
+      player.group.position.copy(player.pos);
+      player.group.rotation.set(0, Math.PI, 0);
+      player.rotY = Math.PI;
+      player.rightArm.rotation.x = 0;
+
+      spawnParticles(player.pos, 0xfde68a, 12);
+      showToast('🪓 무인도에 표류했습니다! 나무(🪵)를 베어 다리를 건설하세요!', 'bg-slate-900/90 text-white border-amber-400');
+    }
+
+    function updateCutscene(dt) {
+      state.cutsceneTime += dt;
+      const t = state.cutsceneTime;
+      const captionEl = document.getElementById('cutscene-caption');
+
+      // 물보라 파티클 주기적 생성
+      cutsceneObjects.splashTimer += dt;
+      if (cutsceneObjects.splashTimer >= 0.25) {
+        cutsceneObjects.splashTimer = 0;
+        if (cutsceneObjects.ship && t < 4.5) {
+          spawnParticles(cutsceneObjects.ship.position, 0xe0f2fe, 4);
+        }
+        if (cutsceneObjects.raft && t >= 2.2 && t < 7.2) {
+          spawnParticles(cutsceneObjects.raft.position, 0xbae6fd, 3);
+        }
+      }
+
+      // [0.0s ~ 3.2s] 폭풍 속 배가 크게 기울며 바닷속으로 침몰
+      if (t < 3.2) {
+        captionEl.textContent = '⛈️ 거센 폭풍우에 배가 암초와 부딪혀 침몰하고 있다...!';
+        const p = t / 3.2;
+        if (cutsceneObjects.ship) {
+          cutsceneObjects.ship.rotation.z = Math.sin(t * 9) * 0.25 + p * 0.65;
+          cutsceneObjects.ship.rotation.x = p * 0.45;
+          cutsceneObjects.ship.position.y = 0.2 - p * 3.4;
+        }
+        // 플레이어가 배에서 뗏목으로 뛰어내리는 연출
+        const jumpArc = Math.sin(Math.min(1, p * 1.4) * Math.PI) * 1.6;
+        player.pos.set(-4.0, -0.2 + jumpArc, 19.5);
+        player.group.position.copy(player.pos);
+        player.rightArm.rotation.x = Math.sin(t * 14) * 0.8;
+
+        const targetCam = new THREE.Vector3(-2.5, 8.5, 29.5);
+        camera.position.lerp(targetCam, 0.1);
+        camera.lookAt(-4.0, 0.2, 20.5);
+      }
+      // [3.2s ~ 6.8s] 나무 판자(뗏목)를 타고 무인도 남쪽 해변으로 표류
+      else if (t < 6.8) {
+        captionEl.textContent = '🌊 나무 판자에 의지한 채 파도를 따라 낯선 섬으로 떠밀려 간다...';
+        const p = (t - 3.2) / 3.6;
+        const ease = 1 - Math.pow(1 - p, 2); // 부드럽게 감속하며 해변 접근
+
+        const curX = THREE.MathUtils.lerp(-4.0, 0, ease);
+        const curZ = THREE.MathUtils.lerp(19.5, 7.6, ease);
+        const bobY = -0.38 + Math.sin(t * 6) * 0.08;
+
+        if (cutsceneObjects.raft) {
+          cutsceneObjects.raft.position.set(curX, bobY, curZ);
+          cutsceneObjects.raft.rotation.z = Math.sin(t * 5) * 0.08;
+        }
+        player.pos.set(curX, bobY + 0.15, curZ);
+        player.group.position.copy(player.pos);
+        player.group.rotation.y = Math.PI;
+        player.rightArm.rotation.x = 0;
+
+        const targetCam = new THREE.Vector3(curX + 3.5, 9.5, curZ + 11.5);
+        camera.position.lerp(targetCam, 0.1);
+        camera.lookAt(curX, 0.5, curZ - 1.5);
+      }
+      // [6.8s ~ 8.6s] 해변 모래사장으로 폴짝 뛰어내리며 도착 완료
+      else if (t < 8.6) {
+        captionEl.textContent = '🏝️ 휴우... 다행히 무인도 해변에 무사히 도착했다!';
+        const p = (t - 6.8) / 1.8;
+        const hop = Math.sin(Math.min(1, p * 1.5) * Math.PI) * 1.1;
+        const landZ = THREE.MathUtils.lerp(7.6, 5.4, Math.min(1, p * 1.5));
+
+        player.pos.set(0, 0.35 + hop, landZ);
+        player.group.position.copy(player.pos);
+
+        // 기본 쿼터뷰 카메라 각도로 부드럽게 복귀
+        const desiredCam = player.pos.clone().add(cameraOffset);
+        camera.position.lerp(desiredCam, 0.08);
+        camera.lookAt(player.pos.x, player.pos.y + 0.8, player.pos.z);
+      } else {
+        endOpeningCutscene();
+      }
+    }
+
+    /**
+     * ============================================================================
+     * 15. 메인 게임 루프 (Update & Render)
+     * ============================================================================
+     */
+    let lastTime = performance.now();
+
+    function update(dt) {
+      if (state.inCutscene) {
+        updateCutscene(dt);
+        // 파티클 & 캠프파이어 애니메이션은 컷신 중에도 동작
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const p = particles[i];
+          p.life -= dt;
+          p.vel.y -= 12 * dt;
+          p.mesh.position.addScaledVector(p.vel, dt);
+          p.mesh.scale.setScalar(Math.max(0.01, p.life));
+          if (p.life <= 0) {
+            scene.remove(p.mesh);
+            particles.splice(i, 1);
+          }
+        }
+        return;
+      }
+
+      if (!state.started) return;
+      state.playTime += dt;
+
+      updatePlayer(dt);
+      updateWorkers(dt);
+      updateEvents(dt);
+
+      // 자원 리스폰 및 타격 바운스 연출
+      for (const r of resources) {
+        if (!r.active) {
+          r.respawnTimer -= dt;
+          if (r.respawnTimer <= 0) {
+            r.active = true;
+            r.isGolden = Math.random() < CONFIG.GOLDEN_RESOURCE_CHANCE;
+            r.hp = r.isGolden ? 4 : 3;
+            scene.remove(r.mesh);
+            r.mesh = r.type === 'wood' ? createTreeMesh(r.isGolden) : createRockMesh(r.isGolden);
+            r.mesh.position.set(r.x, 0.35, r.z);
+            r.mesh.visible = (r.area === 'start') || (r.area === 'east' && state.unlockedEast) || (r.area === 'north' && state.unlockedNorth);
+            scene.add(r.mesh);
+          }
+        } else if (r.bounceTime > 0) {
+          r.bounceTime -= dt;
+          const s = 1 + Math.sin((r.bounceTime / 0.25) * Math.PI) * 0.18;
+          r.mesh.scale.set(s, 2 - s, s);
+          if (r.bounceTime <= 0) r.mesh.scale.set(1, 1, 1);
+        }
+      }
+
+      // 파티클 업데이트
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.life -= dt;
+        p.vel.y -= 12 * dt;
+        p.mesh.position.addScaledVector(p.vel, dt);
+        p.mesh.scale.setScalar(Math.max(0.01, p.life));
+        if (p.life <= 0) {
+          scene.remove(p.mesh);
+          particles.splice(i, 1);
+        }
+      }
+
+      // 캠프파이어 불꽃 & 등대 상단 빛 애니메이션
+      fireMesh.scale.y = 0.9 + Math.sin(state.playTime * 12) * 0.2;
+      if (state.lighthouseBuilt) {
+        lhTop.rotation.y += dt * 3;
+      }
+
+      netUpdate(dt);
+      updateHUD();
+      updateWorldLabels();
+    }
+
+    function animate(now) {
+      requestAnimationFrame(animate);
+      const dt = Math.min(0.05, (now - lastTime) / 1000);
+      lastTime = now;
+
+      update(dt);
+      renderer.render(scene, camera);
+    }
+
+    /**
+     * ============================================================================
+     * 16. 함께하기 (멀티플레이): 한 사람마다 섬 하나 + 저장/이어하기
+     *     - 내 섬은 언제나 내 화면의 (0,0)에 있고, 이웃 섬은 자리(slot) 차이만큼 떨어져 보임
+     * ============================================================================
+     */
+    const store = {
+      get(k) { try { const v = localStorage.getItem('isle.' + k); return v ? JSON.parse(v) : null; } catch (e) { return null; } },
+      set(k, v) { try { localStorage.setItem('isle.' + k, JSON.stringify(v)); } catch (e) {} },
+    };
+    let myName = '';
+    const myUid = store.get('uid') || (() => {
+      const u = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      store.set('uid', u);
+      return u;
+    })();
+
+    // ---- 저장 / 이어하기 ----
+    const SAVE_ZONES = ['workbench', 'bridge_east', 'hire_lumberjack', 'bridge_north', 'hire_miner', 'bridge_west', 'build_lighthouse'];
+    const SAVE_KEYS = ['wood', 'stone', 'gold', 'maxCarry', 'moveSpeed', 'harvestSpeedMult', 'upgradeLevel',
+      'unlockedEast', 'unlockedNorth', 'unlockedHill', 'lighthouseBuilt', 'totalHarvested', 'playTime', 'carryList'];
+
+    function writeSave() {
+      if (!state.started) return;
+      const sv = { v: 1, slot: net.slot, zones: {} };
+      for (const k of SAVE_KEYS) sv[k] = state[k];
+      sv.lumberjacks = state.lumberjacks;
+      sv.miners = state.miners;
+      for (const z of zones) if (SAVE_ZONES.includes(z.id)) sv.zones[z.id] = [z.curWood, z.curStone, z.curGold];
+      store.set('save', sv);
+    }
+
+    function loadSave() {
+      const sv = store.get('save');
+      if (!sv || sv.v !== 1) return false;
+      for (const k of SAVE_KEYS) if (sv[k] !== undefined) state[k] = sv[k];
+      if (!Array.isArray(state.carryList)) state.carryList = [];
+      for (const z of zones) {
+        const a = sv.zones && sv.zones[z.id];
+        if (a) { z.curWood = a[0] | 0; z.curStone = a[1] | 0; z.curGold = a[2] | 0; }
+      }
+      if (state.unlockedEast) {
+        eastIslandGroup.visible = true; eastBridgeMesh.visible = true;
+        walkableRects.push({ minX: 6.0, maxX: 20.0, minZ: -5.0, maxZ: 5.0 });
+        resources.forEach(r => { if (r.area === 'east') r.mesh.visible = true; });
+      }
+      if (state.unlockedNorth) {
+        northIslandGroup.visible = true; northBridgeMesh.visible = true;
+        walkableRects.push({ minX: -5.0, maxX: 5.0, minZ: -20.0, maxZ: -6.0 });
+        resources.forEach(r => { if (r.area === 'north') r.mesh.visible = true; });
+      }
+      if (state.unlockedHill) {
+        westIslandGroup.visible = true; westBridgeMesh.visible = true;
+        walkableRects.push({ minX: -20.0, maxX: -6.0, minZ: -4.5, maxZ: 4.5 });
+      }
+      if (state.lighthouseBuilt) lighthouseGroup.visible = true;
+      state.lumberjacks = 0; state.miners = 0;
+      for (let i = 0; i < Math.min(2, sv.lumberjacks | 0); i++) spawnWorker('wood');
+      for (let i = 0; i < Math.min(2, sv.miners | 0); i++) spawnWorker('stone');
+      if (state.lumberjacks > 0) lumberHutGroup.visible = true;
+      if (state.miners > 0) minerHutGroup.visible = true;
+      updatePlayerStackVisual();
+      return true;
+    }
+
+    // ---- 섬 자리 배치: 가운데부터 바깥으로 빙글빙글 ----
+    const SLOT_DX = 64, SLOT_DZ = 54;
+    const SLOT_CELLS = (() => {
+      const cells = [];
+      for (let gx = -8; gx <= 8; gx++) for (let gz = -8; gz <= 8; gz++) cells.push([gx, gz]);
+      cells.sort((a, b) => (Math.hypot(a[0], a[1]) - Math.hypot(b[0], b[1])) || (Math.atan2(a[1], a[0]) - Math.atan2(b[1], b[0])));
+      return cells;
+    })();
+    function slotOffset(slot) {
+      const c = SLOT_CELLS[slot % SLOT_CELLS.length] || [0, 0];
+      return { x: c[0] * SLOT_DX, z: c[1] * SLOT_DZ };
+    }
+    // 이웃(slot)의 좌표를 내 화면 좌표로 바꿀 때 더할 값
+    function relOffset(slot) {
+      const a = slotOffset(slot), b = slotOffset(net.slot || 0);
+      return { x: a.x - b.x, z: a.z - b.z };
+    }
+
+    const AVATAR_COLORS = [0x2563eb, 0xdb2777, 0x16a34a, 0x9333ea, 0xea580c, 0x0891b2, 0xca8a04, 0xdc2626, 0x4f46e5, 0x059669];
+    const EMOTE_LIST = ['👋', '❤️', '😂', '🎉', '👍', '😮'];
+
+    const net = {
+      ws: null, id: 0, slot: null, connected: false, kicked: false,
+      sendTimer: 0, saveTimer: 0, islSig: '', retry: 0,
+    };
+    const remotes = new Map(); // id -> { name, slot, isl, island, avatar, label, ... }
+
+    function islandSummary() {
+      return {
+        e: state.unlockedEast, n: state.unlockedNorth, h: state.unlockedHill, lh: state.lighthouseBuilt,
+        lj: state.lumberjacks, mn: state.miners, lv: state.upgradeLevel,
+      };
+    }
+
+    function netSend(m) {
+      if (net.ws && net.ws.readyState === 1) net.ws.send(JSON.stringify(m));
+    }
+
+    function netConnect() {
+      if (location.protocol === 'file:') {
+        setNetText('혼자 하기 (파일로 열림)');
+        return;
+      }
+      const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
+      net.ws = ws;
+      setNetText('연결 중...');
+      ws.onopen = () => {
+        const sv = store.get('save');
+        netSend({ t: 'hello', uid: myUid, name: myName, slot: net.slot != null ? net.slot : (sv && Number.isInteger(sv.slot) ? sv.slot : null), isl: islandSummary() });
+      };
+      ws.onmessage = (ev) => {
+        let m;
+        try { m = JSON.parse(ev.data); } catch (e) { return; }
+        onNetMessage(m);
+      };
+      ws.onclose = () => {
+        net.connected = false;
+        for (const id of [...remotes.keys()]) removeRemote(id);
+        renderPeople();
+        if (net.kicked) return;
+        setNetText('다시 연결 중...');
+        net.retry = Math.min(net.retry + 1, 5);
+        setTimeout(netConnect, 1500 * net.retry);
+      };
+    }
+
+    function setNetText(t) { document.getElementById('ui-net').textContent = t; }
+
+    function onNetMessage(m) {
+      if (m.t === 'welcome') {
+        net.id = m.id;
+        net.connected = true;
+        net.retry = 0;
+        net.islSig = JSON.stringify(islandSummary());
+        const slotChanged = net.slot !== m.slot;
+        net.slot = m.slot;
+        if (slotChanged) for (const id of [...remotes.keys()]) removeRemote(id);
+        for (const p of m.ps) if (p.id !== net.id) upsertRemote(p);
+        setNetText('🟢 연결됨');
+        document.getElementById('emote-bar').classList.remove('hidden');
+        document.getElementById('emote-bar').classList.add('flex');
+        renderPeople();
+        writeSave();
+      } else if (m.t === 'join' || m.t === 'info') {
+        if (m.p.id !== net.id) upsertRemote(m.p);
+        renderPeople();
+      } else if (m.t === 'leave') {
+        const r = remotes.get(m.id);
+        if (r) showToast(`👋 ${r.name} 님의 섬이 안개 속으로 사라졌어요.`, 'bg-slate-800 text-white border-slate-500');
+        removeRemote(m.id);
+        renderPeople();
+      } else if (m.t === 's') {
+        for (const a of m.ps) {
+          const r = remotes.get(a[0]);
+          if (!r) continue;
+          const o = relOffset(r.slot);
+          r.tx = a[1] + o.x; r.tz = a[2] + o.z; r.try = a[3]; r.mv = a[4];
+          if (!r.seen) { r.x = r.tx; r.z = r.tz; r.ry = r.try; r.seen = true; }
+          if (r.c !== a[5]) { r.c = a[5]; buildRemoteStack(r); }
+          updateRemoteWorkers(r, a[6] || []);
+        }
+      } else if (m.t === 'emo') {
+        if (m.id === net.id) showEmote(myLabel, m.e, myName);
+        else { const r = remotes.get(m.id); if (r) showEmote(r.label, m.e, r.name); }
+      } else if (m.t === 'news') {
+        showToast(m.msg, m.big ? 'bg-gradient-to-r from-yellow-400 to-orange-500 text-white border-white' : 'bg-sky-700 text-white border-sky-200');
+        if (m.big) sound.playBuildComplete();
+      } else if (m.t === 'kick') {
+        net.kicked = true;
+        setNetText('연결 끊김');
+        showToast('⚠️ ' + m.why, 'bg-rose-600 text-white border-rose-200');
+      }
+    }
+
+    // ---- 이웃 섬 만들기 (보기용) ----
+    function addBlock(parent, x, z, w, d, grassColor) {
+      const g = new THREE.Group();
+      g.position.set(x, 0, z);
+      const sand = new THREE.Mesh(new THREE.BoxGeometry(w + 0.8, 0.55, d + 0.8), new THREE.MeshStandardMaterial({ color: 0xfde68a, roughness: 0.85 }));
+      sand.position.y = -0.25;
+      g.add(sand);
+      const grass = new THREE.Mesh(new THREE.BoxGeometry(w, 0.5, d), new THREE.MeshStandardMaterial({ color: grassColor, roughness: 0.8 }));
+      grass.position.y = 0.1;
+      g.add(grass);
+      parent.add(g);
+      return g;
+    }
+    function addBridge(parent, x, z, w, d) {
+      const b = new THREE.Mesh(new THREE.BoxGeometry(w, 0.3, d), new THREE.MeshStandardMaterial({ color: 0x92400e }));
+      b.position.set(x, 0.32, z);
+      parent.add(b);
+      return b;
+    }
+    function addHut(parent, x, z, bodyColor, roofColor) {
+      const g = new THREE.Group();
+      g.position.set(x, 0.35, z);
+      const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.3, 1.6), new THREE.MeshStandardMaterial({ color: bodyColor }));
+      body.position.y = 0.65;
+      g.add(body);
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(1.5, 1.0, 4), new THREE.MeshStandardMaterial({ color: roofColor }));
+      roof.position.y = 1.75; roof.rotation.y = Math.PI / 4;
+      g.add(roof);
+      parent.add(g);
+      return g;
+    }
+
+    function buildRemoteIsland(r) {
+      const root = new THREE.Group();
+      const parts = {};
+      addBlock(root, 0, 0, 13, 13, 0x4ade80);
+      // 캠프파이어 & 납품함
+      const fire = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.2, 6), new THREE.MeshStandardMaterial({ color: 0xf97316, emissive: 0xea580c, emissiveIntensity: 0.8 }));
+      fire.position.set(0, 0.95, -1.2);
+      root.add(fire);
+      parts.fire = fire;
+      const box = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.9, 1.3), new THREE.MeshStandardMaterial({ color: 0xb45309 }));
+      box.position.set(2.3, 0.8, -1.2);
+      root.add(box);
+
+      parts.east = new THREE.Group();
+      addBlock(parts.east, 15.5, 0, 10, 11, 0x86efac);
+      addBridge(parts.east, 8.5, 0, 4.2, 2.6);
+      parts.north = new THREE.Group();
+      addBlock(parts.north, 0, -15.5, 11, 10, 0x6ee7b7);
+      addBridge(parts.north, 0, -8.5, 2.6, 4.2);
+      parts.west = new THREE.Group();
+      addBlock(parts.west, -15.5, 0, 10, 10, 0xa7f3d0);
+      addBridge(parts.west, -8.5, 0, 4.2, 2.6);
+      root.add(parts.east, parts.north, parts.west);
+
+      // 나무·바위 (보기용 장식)
+      const deco = [['wood', -4.2, -3.8, root], ['wood', -4.5, 1.8, root], ['wood', 4.3, -3.5, root], ['wood', 4.4, 2.5, root], ['wood', -1.8, -4.5, root],
+        ['stone', 13.5, -3.2, parts.east], ['stone', 17.8, -2.8, parts.east], ['stone', 14.0, 3.2, parts.east], ['stone', 18.0, 3.0, parts.east], ['wood', 18.5, 0, parts.east],
+        ['wood', -3.8, -17.5, parts.north], ['stone', 3.8, -17.5, parts.north]];
+      for (const [type, x, z, parent] of deco) {
+        const m = type === 'wood' ? createTreeMesh(false) : createRockMesh(false);
+        m.position.set(x, 0.35, z);
+        parent.add(m);
+      }
+
+      parts.lumberHut = addHut(parts.east, 15.5, -3.5, 0xb45309, 0xdc2626);
+      parts.minerHut = addHut(parts.north, 3.2, -14.5, 0x475569, 0xeab308);
+
+      // 등대
+      const lh = new THREE.Group();
+      lh.position.set(-15.5, 0.35, -1.5);
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.8, 4.8, 12), new THREE.MeshStandardMaterial({ color: 0xf8fafc }));
+      base.position.y = 2.4; lh.add(base);
+      const stripe = new THREE.Mesh(new THREE.CylinderGeometry(1.52, 1.68, 1.5, 12), new THREE.MeshStandardMaterial({ color: 0xef4444 }));
+      stripe.position.y = 2.4; lh.add(stripe);
+      const top = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.95, 1.1, 12), new THREE.MeshStandardMaterial({ color: 0xfef08a, emissive: 0xfacc15, emissiveIntensity: 1.0 }));
+      top.position.y = 5.3; lh.add(top);
+      const roofL = new THREE.Mesh(new THREE.ConeGeometry(1.2, 1.1, 12), new THREE.MeshStandardMaterial({ color: 0xef4444 }));
+      roofL.position.y = 6.35; lh.add(roofL);
+      parts.west.add(lh);
+      parts.lighthouse = lh;
+      parts.lhTop = top;
+
+      scene.add(root);
+      r.island = root;
+      r.parts = parts;
+      r.sign = createWorldLabel('', 0.2);
+      r.sign.el.classList.add('bg-amber-500/90');
+    }
+
+    function applyRemoteIsland(r) {
+      const o = relOffset(r.slot);
+      r.island.position.set(o.x, 0, o.z);
+      const i = r.isl || {};
+      r.parts.east.visible = !!i.e;
+      r.parts.north.visible = !!i.n;
+      r.parts.west.visible = !!i.h;
+      r.parts.lighthouse.visible = !!i.lh;
+      r.parts.lumberHut.visible = (i.lj | 0) > 0;
+      r.parts.minerHut.visible = (i.mn | 0) > 0;
+      r.sign.targetPos.set(o.x, 0.4, o.z + 6.8);
+      r.sign.el.textContent = `🏝️ ${r.name} 님의 섬` + (i.lh ? ' 🗼' : '');
+      r.rects = [{ minX: -6, maxX: 6, minZ: -6, maxZ: 6 }];
+      if (i.e) r.rects.push({ minX: 6.0, maxX: 20.0, minZ: -5.0, maxZ: 5.0 });
+      if (i.n) r.rects.push({ minX: -5.0, maxX: 5.0, minZ: -20.0, maxZ: -6.0 });
+      if (i.h) r.rects.push({ minX: -20.0, maxX: -6.0, minZ: -4.5, maxZ: 4.5 });
+      r.rects = r.rects.map(q => ({ minX: q.minX + o.x, maxX: q.maxX + o.x, minZ: q.minZ + o.z, maxZ: q.maxZ + o.z }));
+    }
+
+    function makeAvatar(color) {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.48, 1.0, 12), new THREE.MeshStandardMaterial({ color }));
+      body.position.y = 0.65; body.castShadow = true; g.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.42, 16, 16), new THREE.MeshStandardMaterial({ color: 0xffedd5 }));
+      head.position.y = 1.45; head.castShadow = true; g.add(head);
+      const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.65, 0.08, 16), new THREE.MeshStandardMaterial({ color: 0xd97706 }));
+      brim.position.y = 1.72; g.add(brim);
+      const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.42, 0.35, 16), new THREE.MeshStandardMaterial({ color: 0xb45309 }));
+      hat.position.y = 1.9; g.add(hat);
+      scene.add(g);
+      return g;
+    }
+
+    const remoteStackGeo = new THREE.BoxGeometry(0.55, 0.14, 0.32);
+    const remoteStackMat = new THREE.MeshStandardMaterial({ color: 0xb45309 });
+    function buildRemoteStack(r) {
+      for (const m of r.stack) r.avatar.remove(m);
+      r.stack = [];
+      for (let i = 0; i < Math.min(r.c, 30); i++) {
+        const m = new THREE.Mesh(remoteStackGeo, remoteStackMat);
+        m.position.set(0, 0.65 + i * 0.16, -0.48);
+        r.avatar.add(m);
+        r.stack.push(m);
+      }
+    }
+
+    function makeMiniWorker(role) {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, 0.65, 10), new THREE.MeshStandardMaterial({ color: role === 1 ? 0x3b82f6 : 0xdc2626 }));
+      body.position.y = 0.42; g.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.34, 12, 12), new THREE.MeshStandardMaterial({ color: 0xffedd5 }));
+      head.position.y = 0.98; g.add(head);
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.35, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: role === 1 ? 0xfacc15 : 0x991b1b }));
+      cap.position.y = 1.03; g.add(cap);
+      g.position.y = 0.35;
+      scene.add(g);
+      return g;
+    }
+
+    function updateRemoteWorkers(r, list) {
+      const o = relOffset(r.slot);
+      while (r.workers.length > list.length) scene.remove(r.workers.pop().g);
+      list.forEach((a, i) => {
+        let w = r.workers[i];
+        if (!w || w.role !== a[0]) {
+          if (w) scene.remove(w.g);
+          w = { role: a[0], g: makeMiniWorker(a[0]), x: a[1] + o.x, z: a[2] + o.z };
+          r.workers[i] = w;
+        }
+        w.tx = a[1] + o.x; w.tz = a[2] + o.z;
+      });
+    }
+
+    function upsertRemote(p) {
+      let r = remotes.get(p.id);
+      if (!r) {
+        r = { id: p.id, name: p.n, slot: p.sl, isl: p.isl, x: 0, z: 0, ry: 0, tx: 0, tz: 0, try: 0, mv: 0, c: 0, seen: false, walk: 0, stack: [], workers: [] };
+        r.avatar = makeAvatar(AVATAR_COLORS[(p.sl + 1) % AVATAR_COLORS.length]);
+        r.label = createWorldLabel('', 2.55);
+        buildRemoteIsland(r);
+        remotes.set(p.id, r);
+      }
+      r.name = p.n; r.slot = p.sl; r.isl = p.isl;
+      if (!r.emoteUntil) r.label.el.textContent = r.name;
+      applyRemoteIsland(r);
+    }
+
+    function removeLabel(item) {
+      if (!item) return;
+      item.el.remove();
+      const i = worldLabels.indexOf(item);
+      if (i !== -1) worldLabels.splice(i, 1);
+    }
+
+    function removeRemote(id) {
+      const r = remotes.get(id);
+      if (!r) return;
+      scene.remove(r.avatar);
+      scene.remove(r.island);
+      for (const w of r.workers) scene.remove(w.g);
+      removeLabel(r.label);
+      removeLabel(r.sign);
+      remotes.delete(id);
+      if (visitingId === id) goHome();
+    }
+
+    function remoteWalkable(x, z) {
+      for (const r of remotes.values()) {
+        if (!r.rects) continue;
+        for (const q of r.rects) if (x >= q.minX && x <= q.maxX && z >= q.minZ && z <= q.maxZ) return true;
+      }
+      return false;
+    }
+
+    // ---- 내 머리 위 이름표 & 감정 표현 ----
+    const myLabel = createWorldLabel('', 2.55);
+    myLabel.visible = false;
+    function showEmote(label, e, name) {
+      if (!label) return;
+      label.el.textContent = `${EMOTE_LIST[e] || '👋'} ${name}`;
+      label.el.style.fontSize = '15px';
+      const holder = label === myLabel ? myLabel : [...remotes.values()].find(r => r.label === label);
+      const until = performance.now() + 2600;
+      if (holder) holder.emoteUntil = until;
+      setTimeout(() => {
+        if (holder && holder.emoteUntil !== until) return;
+        if (holder) holder.emoteUntil = 0;
+        label.el.textContent = label === myLabel ? myName : (holder ? holder.name : name);
+        label.el.style.fontSize = '';
+      }, 2600);
+    }
+
+    (function buildEmoteBar() {
+      const bar = document.getElementById('emote-bar');
+      EMOTE_LIST.forEach((em, i) => {
+        const b = document.createElement('button');
+        b.className = 'w-10 h-10 rounded-xl bg-white/10 hover:bg-white/25 text-xl active:scale-90 transition';
+        b.textContent = em;
+        b.title = '감정 표현';
+        b.addEventListener('click', () => netSend({ t: 'emo', e: i }));
+        bar.appendChild(b);
+      });
+    })();
+
+    // ---- 이웃 목록 & 놀러 가기 ----
+    let visitingId = 0;
+    function progressText(i) {
+      i = i || {};
+      const bridges = (i.e ? 1 : 0) + (i.n ? 1 : 0) + (i.h ? 1 : 0);
+      return `🌉${bridges}/3 · ⚒️Lv.${i.lv || 1}` + (i.lh ? ' · 🗼완공' : '');
+    }
+    function renderPeople() {
+      const list = document.getElementById('people-list');
+      list.innerHTML = '';
+      const rows = [{ me: true, name: myName || '나', isl: islandSummary() }, ...[...remotes.values()].map(r => ({ me: false, r, name: r.name, isl: r.isl }))];
+      for (const row of rows) {
+        const div = document.createElement('div');
+        div.className = 'flex items-center gap-2 bg-white/10 rounded-xl px-2.5 py-1.5';
+        const txt = document.createElement('div');
+        txt.className = 'flex-1 min-w-0';
+        const nm = document.createElement('div');
+        nm.className = 'font-bold truncate ' + (row.me ? 'text-emerald-300' : 'text-white');
+        nm.textContent = (row.me ? '⭐ ' : '🏝️ ') + row.name + (row.me ? ' (나)' : '');
+        const pg = document.createElement('div');
+        pg.className = 'text-[11px] text-white/70';
+        pg.textContent = progressText(row.isl);
+        txt.append(nm, pg);
+        div.appendChild(txt);
+        if (!row.me) {
+          const b = document.createElement('button');
+          b.className = 'shrink-0 text-xs font-bold px-2 py-1 rounded-lg ' + (visitingId === row.r.id ? 'bg-emerald-500' : 'bg-sky-500 hover:bg-sky-400') + ' active:scale-95';
+          b.textContent = visitingId === row.r.id ? '여기 있음' : '놀러 가기';
+          b.addEventListener('click', () => visit(row.r.id));
+          div.appendChild(b);
+        }
+        list.appendChild(div);
+      }
+      document.getElementById('ui-online').textContent = net.connected ? `${remotes.size + 1}명` : '-';
+    }
+
+    function teleport(x, z) {
+      player.pos.set(x, 0.35, z);
+      player.group.position.copy(player.pos);
+      player.rotY = Math.PI;
+      camera.position.copy(player.pos).add(cameraOffset);
+      camera.lookAt(player.pos.x, player.pos.y + 0.8, player.pos.z);
+      spawnParticles(player.pos, 0x7dd3fc, 14);
+      sound.playSplash();
+    }
+    function visit(id) {
+      const r = remotes.get(id);
+      if (!r || !state.started || state.inCutscene) return;
+      const o = relOffset(r.slot);
+      visitingId = id;
+      teleport(o.x, o.z + 5.0);
+      netSend({ t: 'visit', id });
+      showToast(`⛵ ${r.name} 님의 섬에 놀러 왔어요! (구경만 할 수 있어요)`, 'bg-sky-600 text-white border-sky-200');
+      renderPeople();
+    }
+    function goHome() {
+      visitingId = 0;
+      if (state.started) teleport(0, 5.4);
+      renderPeople();
+    }
+
+    document.getElementById('btn-home').addEventListener('click', goHome);
+    document.getElementById('btn-people').addEventListener('click', () => {
+      document.getElementById('people-panel').classList.toggle('hidden');
+    });
+    if (window.innerWidth >= 900) document.getElementById('people-panel').classList.remove('hidden');
+
+    // ---- 매 프레임 ----
+    function netUpdate(dt) {
+      // 그림자·바다가 나를 따라오게 (이웃 섬에 가도 보이도록)
+      dirLight.position.set(player.pos.x + 18, 32, player.pos.z + 18);
+      dirLight.target.position.set(player.pos.x, 0, player.pos.z);
+      dirLight.target.updateMatrixWorld();
+      ocean.position.x = player.pos.x;
+      ocean.position.z = player.pos.z;
+
+      const away = Math.hypot(player.pos.x, player.pos.z + 5) > 30;
+      document.getElementById('btn-home').classList.toggle('hidden', !away);
+      if (!away && visitingId) { visitingId = 0; renderPeople(); }
+
+      // 내 이름표
+      myLabel.visible = net.connected;
+      myLabel.targetPos.copy(player.pos);
+      if (!myLabel.emoteUntil && myLabel.el.textContent !== myName) myLabel.el.textContent = myName;
+
+      // 이웃 부드럽게 움직이기
+      const k = Math.min(1, dt * 10);
+      for (const r of remotes.values()) {
+        r.x += (r.tx - r.x) * k;
+        r.z += (r.tz - r.z) * k;
+        let dr = r.try - r.ry;
+        while (dr > Math.PI) dr -= Math.PI * 2;
+        while (dr < -Math.PI) dr += Math.PI * 2;
+        r.ry += dr * k;
+        r.walk += r.mv ? dt * 12 : 0;
+        r.avatar.position.set(r.x, 0.35 + (r.mv ? Math.abs(Math.sin(r.walk)) * 0.14 : 0), r.z);
+        r.avatar.rotation.y = r.ry;
+        r.label.targetPos.set(r.x, 0.35, r.z);
+        r.parts.fire.scale.y = 0.9 + Math.sin(state.playTime * 12) * 0.2;
+        if (r.isl && r.isl.lh) r.parts.lhTop.rotation.y += dt * 3;
+        for (const w of r.workers) {
+          w.x += (w.tx - w.x) * k; w.z += (w.tz - w.z) * k;
+          w.g.position.x = w.x; w.g.position.z = w.z;
+        }
+      }
+
+      // 내 위치 보내기 (1초에 10번)
+      net.sendTimer -= dt;
+      if (net.connected && net.sendTimer <= 0) {
+        net.sendTimer = 0.1;
+        const moving = !!(joystick.active || keys['KeyW'] || keys['KeyA'] || keys['KeyS'] || keys['KeyD'] || keys['ArrowUp'] || keys['ArrowDown'] || keys['ArrowLeft'] || keys['ArrowRight']);
+        netSend({
+          t: 'p', x: +player.pos.x.toFixed(2), z: +player.pos.z.toFixed(2), ry: +player.rotY.toFixed(2), mv: moving ? 1 : 0,
+          c: state.carryList.length,
+          w: workers.map(w => [w.role === 'stone' ? 1 : 0, +w.pos.x.toFixed(2), +w.pos.z.toFixed(2)]),
+        });
+        const sig = JSON.stringify(islandSummary());
+        if (sig !== net.islSig) {
+          net.islSig = sig;
+          netSend({ t: 'isl', isl: islandSummary() });
+          renderPeople();
+          writeSave();
+        }
+      }
+
+      // 3초마다 저장
+      net.saveTimer -= dt;
+      if (net.saveTimer <= 0) { net.saveTimer = 3; writeSave(); }
+    }
+    window.addEventListener('beforeunload', writeSave);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) writeSave(); });
+
+    // UI 버튼 이벤트
+    document.getElementById('btn-start').addEventListener('click', async () => {
+      const nameEl = document.getElementById('name-input');
+      const name = nameEl.value.trim().slice(0, 10);
+      if (!name) {
+        nameEl.focus();
+        nameEl.classList.add('border-rose-500');
+        nameEl.placeholder = '이름을 먼저 적어 주세요!';
+        return;
+      }
+      nameEl.blur();
+      myName = name;
+      store.set('name', name);
+      sound.init();
+      document.getElementById('start-modal').classList.add('hidden');
+      netConnect();
+      if (loadSave()) {
+        // 이어하기: 컷신 없이 바로 내 섬 해변에서 시작
+        state.inCutscene = true;
+        endOpeningCutscene();
+        showToast(`🏝️ ${myName} 님의 섬으로 돌아왔어요!`, 'bg-emerald-600 text-white border-emerald-200');
+      } else {
+        startOpeningCutscene();
+      }
+    });
+
+    document.getElementById('btn-skip-cutscene').addEventListener('click', () => {
+      endOpeningCutscene();
+    });
+
+    document.getElementById('btn-continue').addEventListener('click', () => {
+      const modal = document.getElementById('victory-modal');
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+    });
+
+    document.getElementById('btn-sound').addEventListener('click', () => {
+      sound.enabled = !sound.enabled;
+      document.getElementById('btn-sound').textContent = sound.enabled ? '🔊' : '🔇';
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    window.onload = function () {
+      const saved = store.get('name');
+      if (saved) document.getElementById('name-input').value = saved;
+      if (store.get('save')) document.getElementById('btn-start').textContent = '내 섬으로 이어하기! 🏝️';
+      updateHUD();
+      requestAnimationFrame(animate);
+    };
+  </script>
+</body>
+</html>

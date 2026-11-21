@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "island",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "PORT=3500",
+        "node",
+        "server.js"
+      ],
+      "port": 3500
+    }
+  ]
+}

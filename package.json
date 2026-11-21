@@ -1,0 +1,10 @@
+{
+  "name": "island-tycoon",
+  "version": "1.0.0",
+  "description": "3D 무인도 타이쿤 온라인 — 한 사람이 섬 하나씩 가지고 함께 노는 브라우저 게임 (Three.js + WebSocket)",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "license": "MIT",
+  "dependencies": { "ws": "^8.23.0" },
+  "engines": { "node": ">=18" }
+}
