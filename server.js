@@ -132,9 +132,12 @@ function leave(p) {
 }
 
 // 위치 나눠 주기
+const FULL_EVERY = 20; // 약 2초
+let tickN = 0;
 setInterval(() => {
   const now = Date.now();
   const ps = [];
+  const full = ++tickN % FULL_EVERY === 0;
   for (const p of players.values()) {
     if (!p.ready) continue;
     if (now - p.last > AFK_MS) {
@@ -143,9 +146,11 @@ setInterval(() => {
       leave(p);
       continue;
     }
-    ps.push([p.id, p.x, p.z, p.ry, p.mv, p.c, p.w]);
+    // 전송량 줄이기: 지난번과 달라진 사람만 보냄. FULL_EVERY 번에 한 번은 모두 보냄
+    const j = JSON.stringify([p.id, p.x, p.z, p.ry, p.mv, p.c, p.w]);
+    if (full || p.sentJ !== j) { p.sentJ = j; ps.push(j); }
   }
-  if (ps.length) broadcast({ t: 's', ps });
+  if (ps.length) { const s = '{"t":"s","ps":[' + ps.join(',') + ']}'; for (const p of players.values()) if (p.ready && p.ws.readyState === 1) p.ws.send(s); }
 }, TICK_MS);
 
 server.listen(PORT, () => console.log(`무인도 타이쿤 온라인: http://localhost:${PORT}`));
