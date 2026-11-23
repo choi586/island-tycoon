@@ -60,7 +60,8 @@ function broadcast(m, except) {
   for (const p of players.values()) if (p.ready && p !== except && p.ws.readyState === 1) p.ws.send(s);
 }
 
-const wss = new WebSocketServer({ server, maxPayload: 4096 });
+// 보내는 신호를 압축해 전송량을 줄임 (브라우저가 알아서 풂)
+const wss = new WebSocketServer({ server, maxPayload: 4096 , perMessageDeflate: { threshold: 64, zlibDeflateOptions: { level: 3, memLevel: 7 }, concurrencyLimit: 8 } });
 
 wss.on('connection', (ws) => {
   const p = { id: nextId++, ws, ready: false, slot: null, name: '', uid: '', isl: cleanIsland(), x: 0, z: 5, ry: 0, mv: 0, c: 0, w: [], last: Date.now(), lastEmo: 0 };
