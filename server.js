@@ -2,6 +2,8 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
+const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 
 const PORT = process.env.PORT || 3000;
@@ -22,13 +24,23 @@ const server = http.createServer((req, res) => {
   if (rel === '/') rel = '/index.html';
   const file = path.join(PUBLIC, path.normalize(rel));
   if (!file.startsWith(PUBLIC + path.sep)) { res.writeHead(403); return res.end(); }
-  fs.readFile(file, (err, data) => {
-    if (err) { res.writeHead(404); return res.end('not found'); }
+  // 전송량 줄이기: 글자 파일은 압축해서, 안 바뀐 파일은 다시 안 보냄(304)
+  let f = cache.get(file);
+  if (!f) {
+    let raw;
+    try { raw = fs.readFileSync(file); } catch (e) { res.writeHead(404); return res.end('not found'); }
     const ext = path.extname(file);
-    res.writeHead(200, { 'Content-Type': TYPES[ext] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
-    res.end(data);
-  });
+    f = { type: TYPES[ext] || 'application/octet-stream', raw, gz: /\.(html|js|css|svg)$/.test(ext) ? zlib.gzipSync(raw, { level: 9 }) : null, tag: '"' + crypto.createHash('sha1').update(raw).digest('hex').slice(0, 16) + '"' };
+    cache.set(file, f);
+  }
+  const head = { 'Content-Type': f.type, 'Cache-Control': 'no-cache', ETag: f.tag, Vary: 'Accept-Encoding' };
+  if (req.headers['if-none-match'] === f.tag) { res.writeHead(304, head); return res.end(); }
+  const gz = f.gz && /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+  if (gz) head['Content-Encoding'] = 'gzip';
+  res.writeHead(200, head);
+  res.end(gz ? f.gz : f.raw);
 });
+const cache = new Map();
 
 // ---------- 사람들 ----------
 const players = new Map(); // id -> player
